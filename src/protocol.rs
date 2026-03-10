@@ -1,231 +1,252 @@
-//! AHP JSON-RPC 2.0 protocol types.
-//!
-//! The Agent Harness Protocol uses newline-delimited JSON-RPC 2.0 messages
-//! over stdio. Blocking events (`pre_tool_use`, `pre_prompt`) are sent as
-//! requests with an `id`; all other events are sent as notifications (no `id`).
-//!
-//! ## Wire format
-//!
-//! ```json
-//! {
-//!   "jsonrpc": "2.0",
-//!   "id": 1,
-//!   "method": "harness/event",
-//!   "params": {
-//!     "event_type": "pre_tool_use",
-//!     "payload": { ... },
-//!     "meta": { "depth": 2 }
-//!   }
-//! }
-//! ```
-//!
-//! `meta.depth` is the sub-agent nesting depth:
-//! `0` = user session, `1` = first-level sub-agent, etc.
+//! AHP protocol message definitions
 
-use a3s_code_core::hooks::HookEvent;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-// ============================================================================
-// Meta
-// ============================================================================
-
-/// Per-message metadata injected by the AHP host into every request/notification.
+/// JSON-RPC 2.0 request
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AhpMeta {
-    /// Sub-agent nesting depth.
-    ///
-    /// `0` = user-facing session, `1` = first-level sub-agent, etc.
-    /// The harness server can use this to apply stricter policies for deeply
-    /// nested agents, or to track session lineage across the call tree.
-    pub depth: u32,
-}
-
-impl AhpMeta {
-    pub fn new(depth: u32) -> Self {
-        Self { depth }
-    }
-}
-
-// ============================================================================
-// Params construction
-// ============================================================================
-
-/// Build the `params` object for an AHP message.
-///
-/// Merges the serialized `HookEvent` (which produces `event_type` + `payload`
-/// fields) with the `meta` object into a single flat JSON object.
-///
-/// Returns `None` only if serialisation of the event itself fails.
-pub fn build_params(event: &HookEvent, meta: &AhpMeta) -> Option<serde_json::Value> {
-    let mut params = serde_json::to_value(event).ok()?;
-    if let serde_json::Value::Object(ref mut map) = params {
-        map.insert(
-            "meta".to_string(),
-            serde_json::to_value(meta).unwrap_or(serde_json::Value::Null),
-        );
-    }
-    Some(params)
-}
-
-// ============================================================================
-// Outgoing messages (host → server)
-// ============================================================================
-
-/// JSON-RPC request — sent for blocking events that require a decision.
-#[derive(Serialize)]
 pub struct AhpRequest {
-    pub jsonrpc: &'static str,
-    pub id: u64,
-    pub method: &'static str,
+    pub jsonrpc: String,
+    pub id: String,
+    pub method: String,
     pub params: serde_json::Value,
+}
+
+/// JSON-RPC 2.0 response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AhpResponse {
+    pub jsonrpc: String,
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<AhpErrorObject>,
+}
+
+/// JSON-RPC 2.0 notification (no id, no response expected)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AhpNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: serde_json::Value,
+}
+
+/// JSON-RPC 2.0 error object
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AhpErrorObject {
+    pub code: i32,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+/// AHP event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AhpEvent {
+    pub event_type: EventType,
+    pub session_id: String,
+    pub agent_id: String,
+    pub timestamp: String,
+    pub depth: u32,
+    pub payload: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Event types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventType {
+    Handshake,
+    PreAction,
+    PostAction,
+    PrePrompt,
+    PostResponse,
+    SessionStart,
+    SessionEnd,
+    Error,
+    Query,
+    Heartbeat,
+}
+
+impl EventType {
+    /// Returns true if this event type requires a response (blocking)
+    pub fn is_blocking(&self) -> bool {
+        matches!(
+            self,
+            EventType::Handshake | EventType::PreAction | EventType::PrePrompt | EventType::Query
+        )
+    }
+}
+
+impl std::fmt::Display for EventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventType::Handshake => write!(f, "handshake"),
+            EventType::PreAction => write!(f, "pre_action"),
+            EventType::PostAction => write!(f, "post_action"),
+            EventType::PrePrompt => write!(f, "pre_prompt"),
+            EventType::PostResponse => write!(f, "post_response"),
+            EventType::SessionStart => write!(f, "session_start"),
+            EventType::SessionEnd => write!(f, "session_end"),
+            EventType::Error => write!(f, "error"),
+            EventType::Query => write!(f, "query"),
+            EventType::Heartbeat => write!(f, "heartbeat"),
+        }
+    }
+}
+
+/// Decision types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "lowercase")]
+pub enum Decision {
+    Allow {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        modified_payload: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<HashMap<String, serde_json::Value>>,
+    },
+    Block {
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<HashMap<String, serde_json::Value>>,
+    },
+    Modify {
+        modified_payload: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<HashMap<String, serde_json::Value>>,
+    },
+    Defer {
+        retry_after_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    Escalate {
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        escalation_target: Option<String>,
+    },
+}
+
+/// Handshake request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeRequest {
+    pub protocol_version: String,
+    pub agent_info: AgentInfo,
+    pub session_id: String,
+    pub agent_id: String,
+}
+
+/// Agent information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub framework: String,
+    pub version: String,
+    pub capabilities: Vec<String>,
+}
+
+/// Handshake response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeResponse {
+    pub protocol_version: String,
+    pub harness_info: HarnessInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<HarnessConfig>,
+}
+
+/// Harness information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessInfo {
+    pub name: String,
+    pub version: String,
+    pub capabilities: Vec<String>,
+}
+
+/// Harness configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+}
+
+/// Query request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryRequest {
+    pub session_id: String,
+    pub agent_id: String,
+    pub query_type: String,
+    pub payload: serde_json::Value,
+}
+
+/// Query response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResponse {
+    pub answer: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alternatives: Option<Vec<String>>,
+}
+
+/// Batch request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRequest {
+    pub events: Vec<AhpEvent>,
+}
+
+/// Batch response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResponse {
+    pub decisions: Vec<Decision>,
 }
 
 impl AhpRequest {
-    pub fn new(id: u64, params: serde_json::Value) -> Self {
+    pub fn new(method: impl Into<String>, params: serde_json::Value) -> Self {
         Self {
-            jsonrpc: "2.0",
-            id,
-            method: "harness/event",
+            jsonrpc: "2.0".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
+            method: method.into(),
             params,
         }
     }
-}
-
-/// JSON-RPC notification — sent for fire-and-forget events.
-#[derive(Serialize)]
-pub struct AhpNotification {
-    pub jsonrpc: &'static str,
-    pub method: &'static str,
-    pub params: serde_json::Value,
 }
 
 impl AhpNotification {
-    pub fn new(params: serde_json::Value) -> Self {
+    pub fn new(method: impl Into<String>, params: serde_json::Value) -> Self {
         Self {
-            jsonrpc: "2.0",
-            method: "harness/event",
+            jsonrpc: "2.0".to_string(),
+            method: method.into(),
             params,
         }
     }
 }
 
-// ============================================================================
-// Incoming messages (server → host)
-// ============================================================================
-
-/// Action decided by the harness server.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AhpAction {
-    Continue,
-    Block,
-    Skip,
-    Retry,
-}
-
-/// Decision returned by the harness server for blocking events.
-#[derive(Debug, Clone, Deserialize)]
-pub struct AhpDecision {
-    pub action: AhpAction,
-    pub reason: Option<String>,
-    pub modified: Option<serde_json::Value>,
-    pub retry_delay_ms: Option<u64>,
-}
-
-impl Default for AhpDecision {
-    fn default() -> Self {
+impl AhpResponse {
+    pub fn success(id: impl Into<String>, result: serde_json::Value) -> Self {
         Self {
-            action: AhpAction::Continue,
-            reason: None,
-            modified: None,
-            retry_delay_ms: None,
+            jsonrpc: "2.0".to_string(),
+            id: id.into(),
+            result: Some(result),
+            error: None,
         }
     }
-}
 
-/// Incoming JSON-RPC response from the harness server.
-#[derive(Deserialize)]
-pub struct AhpResponse {
-    pub id: u64,
-    pub result: AhpDecision,
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use a3s_code_core::hooks::{HookEvent, PreToolUseEvent};
-
-    fn sample_event() -> HookEvent {
-        HookEvent::PreToolUse(PreToolUseEvent {
-            session_id: "s1".into(),
-            tool: "Bash".into(),
-            args: serde_json::json!({"command": "ls"}),
-            working_directory: "/workspace".into(),
-            recent_tools: vec![],
-        })
-    }
-
-    #[test]
-    fn test_build_params_contains_event_fields() {
-        let event = sample_event();
-        let meta = AhpMeta::new(0);
-        let params = build_params(&event, &meta).unwrap();
-        assert_eq!(params["event_type"], "pre_tool_use");
-        assert!(params["payload"].is_object());
-    }
-
-    #[test]
-    fn test_build_params_contains_meta() {
-        let event = sample_event();
-        let meta = AhpMeta::new(3);
-        let params = build_params(&event, &meta).unwrap();
-        assert_eq!(params["meta"]["depth"], 3);
-    }
-
-    #[test]
-    fn test_request_serialization() {
-        let event = sample_event();
-        let meta = AhpMeta::new(1);
-        let params = build_params(&event, &meta).unwrap();
-        let req = AhpRequest::new(42, params);
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"jsonrpc\":\"2.0\""));
-        assert!(json.contains("\"id\":42"));
-        assert!(json.contains("\"method\":\"harness/event\""));
-        assert!(json.contains("pre_tool_use"));
-        assert!(json.contains("\"depth\":1"));
-    }
-
-    #[test]
-    fn test_notification_has_no_id() {
-        let event = sample_event();
-        let meta = AhpMeta::new(0);
-        let params = build_params(&event, &meta).unwrap();
-        let notif = AhpNotification::new(params);
-        let json = serde_json::to_string(&notif).unwrap();
-        assert!(!json.contains("\"id\""));
-        assert!(json.contains("\"method\":\"harness/event\""));
-        assert!(json.contains("\"depth\":0"));
-    }
-
-    #[test]
-    fn test_decision_default_is_continue() {
-        let d = AhpDecision::default();
-        assert_eq!(d.action, AhpAction::Continue);
-        assert!(d.reason.is_none());
-        assert!(d.modified.is_none());
-    }
-
-    #[test]
-    fn test_ahp_response_deserialization() {
-        let raw = r#"{"jsonrpc":"2.0","id":1,"result":{"action":"block","reason":"dangerous","modified":null,"retry_delay_ms":null}}"#;
-        let resp: AhpResponse = serde_json::from_str(raw).unwrap();
-        assert_eq!(resp.id, 1);
-        assert_eq!(resp.result.action, AhpAction::Block);
-        assert_eq!(resp.result.reason.as_deref(), Some("dangerous"));
+    pub fn error(id: impl Into<String>, code: i32, message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id: id.into(),
+            result: None,
+            error: Some(AhpErrorObject {
+                code,
+                message: message.into(),
+                data: None,
+            }),
+        }
     }
 }
