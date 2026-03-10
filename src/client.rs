@@ -2,10 +2,11 @@
 
 use crate::{
     AhpRequest, AhpResponse, AhpNotification, AhpEvent, EventType, Decision,
-    HandshakeRequest, HandshakeResponse, AgentInfo, QueryRequest, QueryResponse,
+    HandshakeRequest, HandshakeResponse, QueryRequest, QueryResponse,
     BatchRequest, BatchResponse, Transport, TransportConfig, Result, AhpError,
     PROTOCOL_VERSION,
 };
+use crate::protocol::{AgentInfo};
 use crate::transport::TransportLayer;
 use std::sync::Arc;
 
@@ -38,13 +39,13 @@ impl AhpClient {
             }
             
             #[cfg(feature = "grpc")]
-            Transport::Grpc { endpoint, auth } => {
-                Arc::new(crate::transport::grpc::GrpcTransport::connect(endpoint, auth).await?)
+            Transport::Grpc { endpoint: _, auth: _ } => {
+                return Err(AhpError::UnsupportedCapability("gRPC transport not yet implemented".to_string()));
             }
-            
+
             #[cfg(feature = "unix-socket")]
-            Transport::UnixSocket { path } => {
-                Arc::new(crate::transport::unix_socket::UnixSocketTransport::connect(path).await?)
+            Transport::UnixSocket { path: _ } => {
+                return Err(AhpError::UnsupportedCapability("Unix socket transport not yet implemented".to_string()));
             }
             
             #[allow(unreachable_patterns)]

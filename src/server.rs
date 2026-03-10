@@ -2,10 +2,11 @@
 
 use crate::{
     AhpRequest, AhpResponse, AhpNotification, AhpEvent, EventType, Decision,
-    HandshakeRequest, HandshakeResponse, HarnessInfo, HarnessConfig,
+    HandshakeRequest, HandshakeResponse,
     QueryRequest, QueryResponse, BatchRequest, BatchResponse,
     Result, AhpError, PROTOCOL_VERSION,
 };
+use crate::protocol::{HarnessInfo, HarnessConfig};
 use async_trait::async_trait;
 use std::sync::Arc;
 
