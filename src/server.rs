@@ -1,6 +1,6 @@
 //! AHP server implementation
 
-use crate::protocol::{HarnessConfig, HarnessInfo};
+use crate::protocol::{EventContext, HarnessConfig, HarnessInfo, IdleDecision, IdleEvent};
 use crate::{
     AhpError, AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest, BatchResponse,
     Decision, EventType, HandshakeRequest, HandshakeResponse, QueryRequest, QueryResponse, Result,
@@ -29,6 +29,19 @@ pub trait EventHandler: Send + Sync {
         Err(AhpError::UnsupportedCapability(
             "Query not supported".to_string(),
         ))
+    }
+
+    /// Handle an idle event - called when agent has been idle for threshold duration
+    ///
+    /// This enables background consolidation (dream system), memory cleanup, etc.
+    /// Default: allow idle processing
+    async fn handle_idle(
+        &self,
+        idle_event: &IdleEvent,
+        context: &EventContext,
+    ) -> Result<IdleDecision> {
+        let _ = (idle_event, context);
+        Ok(IdleDecision::Allow)
     }
 }
 

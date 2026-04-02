@@ -49,6 +49,9 @@ pub struct AhpEvent {
     pub timestamp: String,
     pub depth: u32,
     pub payload: serde_json::Value,
+    /// Structured context for context-aware decisions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<EventContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
@@ -67,6 +70,7 @@ pub enum EventType {
     Error,
     Query,
     Heartbeat,
+    Idle,
 }
 
 impl EventType {
@@ -92,6 +96,7 @@ impl std::fmt::Display for EventType {
             EventType::Error => write!(f, "error"),
             EventType::Query => write!(f, "query"),
             EventType::Heartbeat => write!(f, "heartbeat"),
+            EventType::Idle => write!(f, "idle"),
         }
     }
 }
@@ -249,4 +254,112 @@ impl AhpResponse {
             }),
         }
     }
+}
+
+// ============================================================================
+// Idle & Heartbeat Event Types
+// ============================================================================
+
+/// Idle event - fired when the agent has been idle for a threshold duration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdleEvent {
+    /// Duration of idle time in milliseconds
+    pub idle_duration_ms: u64,
+    /// Reason for becoming idle
+    pub idle_reason: String,
+    /// Last event type before becoming idle
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_type: Option<String>,
+    /// Suggested action for the idle period (e.g., "dream", "consolidate")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_action: Option<String>,
+}
+
+/// Heartbeat event - periodic status update
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatEvent {
+    /// Agent uptime in milliseconds
+    pub uptime_ms: u64,
+    /// Total events processed since start
+    pub total_events_processed: u64,
+    /// Current agent state
+    pub current_state: String,
+}
+
+// ============================================================================
+// Event Context (rich context for control decisions)
+// ============================================================================
+
+/// Structured context passed with events for context-aware control decisions.
+///
+/// The client自主 (client) exposes capabilities it chooses - the server can use
+/// any capabilities that are exposed. Unrecognized or unneeded capabilities
+/// should be ignored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventContext {
+    /// Recent facts or knowledge retrieved
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent_facts: Option<Vec<Fact>>,
+    /// Memory/knowledge base state summary
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_summary: Option<MemorySummary>,
+    /// Session statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_stats: Option<SessionStats>,
+    /// Current task/goal description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task: Option<String>,
+    /// Client自主 exposes its own capabilities as arbitrary key-value pairs.
+    /// Servers can use these to interact with the agent (e.g., memory search,
+    /// session control, cross-session queries).
+    ///
+    /// Example capabilities:
+    /// - `memory_search`: URL or endpoint for searching memory
+    /// - `session_control`: URL or endpoint for controlling the session
+    /// - `cross_session`: URL or endpoint for cross-session queries
+    /// - `custom`: Any client-specific capabilities
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+/// A factual memory item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fact {
+    pub content: String,
+    pub source: String,
+    pub confidence: f32,
+}
+
+/// Memory state summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySummary {
+    pub memory_type: String,
+    pub total_items: usize,
+    pub recent_topics: Vec<String>,
+}
+
+/// Session statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStats {
+    pub total_actions: usize,
+    pub total_tokens: i32,
+    pub duration_ms: u64,
+    pub error_count: usize,
+}
+
+// ============================================================================
+// Idle Decision (response to idle events)
+// ============================================================================
+
+/// Decision for idle/dream events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "lowercase")]
+pub enum IdleDecision {
+    /// Allow background consolidation/dream
+    Allow,
+    /// Defer idle processing
+    Defer {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
