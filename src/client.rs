@@ -125,6 +125,7 @@ impl AhpClient {
             timestamp: chrono::Utc::now().to_rfc3339(),
             depth: 0,
             payload,
+            context: None,
             metadata: None,
         };
 

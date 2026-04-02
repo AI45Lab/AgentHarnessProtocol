@@ -1,4 +1,4 @@
-# Agent Harness Protocol (AHP) v2.0
+# Agent Harness Protocol (AHP) v2.0.1
 
 **A universal, transport-agnostic protocol for supervising autonomous AI agents**
 
@@ -178,6 +178,108 @@ The protocol is designed for high-throughput scenarios:
 │  │  • Alerting (PagerDuty, Slack, …)                      │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
+```
+
+### Event Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Agent (A3S Code, etc.)                          │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐  │
+│  │ Session │───▶│ PrePrompt│───▶│ LLM Call│───▶│PostResp │───▶│   ...   │  │
+│  │  Start  │    │         │    │         │    │         │    │         │  │
+│  └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘  │
+│       │               │               │               │               │       │
+│       ▼               ▼               ▼               ▼               ▼       │
+│  ┌─────────────────────────────────────────────────────────────────────┐     │
+│  │                      AhpHookExecutor                                 │     │
+│  │  • Maps hook events to AHP events                                   │     │
+│  │  • Sends events to harness (blocking or fire-and-forget)            │     │
+│  │  • Enforces decisions (Allow/Block/Modify/Defer)                   │     │
+│  │  • Tracks idle state & fires idle events                           │     │
+│  └─────────────────────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+                         ┌───────────────────────┐
+                         │   AHP Transport       │
+                         │   (stdio/http/ws/...) │
+                         └───────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Harness Server                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
+│  │  Policy 1   │  │  Policy 2   │  │  Policy N   │  │  LLM-based  │      │
+│  │  (regex)    │  │  (allowlist)│  │  (rate)     │  │  (semantic) │      │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘      │
+│         └──────────────────┴──────────────────┴────────────────┘            │
+│                                    │                                         │
+│                                    ▼                                         │
+│                          ┌─────────────────┐                               │
+│                          │  Decision Engine │                               │
+│                          │  Allow / Block   │                               │
+│                          │  Modify / Defer  │                               │
+│                          │  Escalate        │                               │
+│                          └─────────────────┘                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Idle Detection Flow
+
+```
+Agent Idle                    AHP Client                         Harness
+   │                              │                                  │
+   │  [No activity for N seconds] │                                  │
+   │─────────────────────────────▶│                                  │
+   │                              │  IdleEvent {                      │
+   │                              │    idle_duration_ms: 10000,       │
+   │                              │    idle_reason: "no_activity",    │
+   │                              │    suggested_action: "dream"      │
+   │                              │  } + EventContext {               │
+   │                              │    capabilities: {...}            │
+   │                              │  }                               │
+   │                              │─────────────────────────────────▶│
+   │                              │                                  │
+   │                              │    IdleDecision::Allow           │
+   │                              │◀─────────────────────────────────│
+   │                              │                                  │
+   │  [Background consolidation]  │  [Continue to dream]             │
+   │◀─────────────────────────────│                                  │
+```
+
+### Context Propagation
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Agent Runtime                                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ AhpHookExecutor                                                      │   │
+│  │                                                                       │   │
+│  │  capabilities: {                     EventContext {                   │   │
+│  │    memory_search: {...},      ▶      recent_facts: [...],            │   │
+│  │    session_info: {...},      ▶      memory_summary: {...},           │   │
+│  │    cross_session: {...},     ▶      session_stats: {...},           │   │
+│  │    custom_ai_tool: {...}     ▶      current_task: "implement X",   │   │
+│  │  }                               capabilities: {...}                 │   │
+│  │                                     }                                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                      │                                      │
+│                                      ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                           AhpEvent                                    │   │
+│  │  {                                                                    │   │
+│  │    event_type: "pre_action",                                         │   │
+│  │    session_id: "...",                                                │   │
+│  │    agent_id: "...",                                                   │   │
+│  │    timestamp: "...",                                                  │   │
+│  │    depth: 0,                                                         │   │
+│  │    payload: {...},                                                    │   │
+│  │    context: { EventContext }  ◀── All驾驭 points receive this       │   │
+│  │  }                                                                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Roles
@@ -877,6 +979,30 @@ Contributions welcome! Please see CONTRIBUTING.md for guidelines.
 
 ---
 
-**Version:** 2.0.0
-**Last Updated:** 2026-03-10
-**Status:** Draft Specification
+**Version:** 2.0.1
+**Last Updated:** 2026-04-02
+**Status:** Stable
+
+## Changelog
+
+### v2.0.1 (2026-04-02)
+
+**New Features:**
+- **Idle Detection**: Support for `idle` event type to detect when agent is idle, enabling background consolidation/dream systems
+- **EventContext**: Structured context passed with events including `recent_facts`, `memory_summary`, `session_stats`, `current_task`
+- **Client-Exposed Capabilities**: `EventContext` supports dynamic `capabilities` field where clients self-report their abilities (memory_search, session_info, cross_session, etc.)
+- **IdleDecision**: New decision type for idle events (`Allow`, `Defer`)
+- **HeartbeatEvent**: Periodic status update structure for agent liveness
+
+**Event Types Added:**
+- `idle` - Agent idle detection (fire-and-forget notification)
+- `heartbeat` - Periodic keepalive (already in spec, now formalized)
+
+**EventContext Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `recent_facts` | `Vec<Fact>` | Recent facts/knowledge retrieved |
+| `memory_summary` | `MemorySummary` | Memory/knowledge base state |
+| `session_stats` | `SessionStats` | Session statistics |
+| `current_task` | `String` | Current task/goal description |
+| `capabilities` | `HashMap` | Client self-reported capabilities |
