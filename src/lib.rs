@@ -61,7 +61,8 @@ pub use client::AhpClient;
 pub use error::{AhpError, Result};
 pub use protocol::{
     AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest, BatchResponse, Decision,
-    EventType, HandshakeRequest, HandshakeResponse, QueryRequest, QueryResponse,
+    EventContext, EventType, Fact, HandshakeRequest, HandshakeResponse, HeartbeatEvent,
+    IdleDecision, IdleEvent, MemorySummary, QueryRequest, QueryResponse, SessionStats,
 };
 pub use server::AhpServer;
 pub use transport::{Transport, TransportConfig};
