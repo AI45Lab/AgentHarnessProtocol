@@ -71,6 +71,20 @@ impl AhpClient {
         })
     }
 
+    /// Create a new AHP client with a pre-configured transport layer (for testing).
+    ///
+    /// This bypasses transport selection logic and uses the provided transport directly.
+    /// No handshake is performed - the caller is responsible for setting up the transport.
+    pub fn new_for_testing(transport: Arc<dyn TransportLayer>) -> Self {
+        Self {
+            transport,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            agent_id: uuid::Uuid::new_v4().to_string(),
+            config: TransportConfig::default(),
+            handshake_done: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     /// Perform handshake with harness server
     pub async fn handshake(&self) -> Result<HandshakeResponse> {
         let request = HandshakeRequest {
@@ -150,6 +164,42 @@ impl AhpClient {
         } else {
             // Fire-and-forget notification
             let notification = AhpNotification::new("ahp/event", serde_json::to_value(&event)?);
+            self.transport.send_notification(notification).await?;
+
+            // Return default allow decision for notifications
+            Ok(Decision::Allow {
+                modified_payload: None,
+                metadata: None,
+            })
+        }
+    }
+
+    /// Send a complete event (with context) and wait for decision.
+    ///
+    /// Unlike `send_event` which creates a new AhpEvent, this method accepts
+    /// the full event with pre-built context and metadata.
+    pub async fn send_event_full(&self, event: &AhpEvent) -> Result<Decision> {
+        if event.event_type.is_blocking() {
+            let ahp_request = AhpRequest::new("ahp/event", serde_json::to_value(event)?);
+            let response = self.transport.send_request(ahp_request).await?;
+
+            if let Some(error) = response.error {
+                return Err(AhpError::Protocol(format!(
+                    "Event failed: {}",
+                    error.message
+                )));
+            }
+
+            let decision: Decision = serde_json::from_value(
+                response
+                    .result
+                    .ok_or_else(|| AhpError::Protocol("Missing result".to_string()))?,
+            )?;
+
+            Ok(decision)
+        } else {
+            // Fire-and-forget notification
+            let notification = AhpNotification::new("ahp/event", serde_json::to_value(event)?);
             self.transport.send_notification(notification).await?;
 
             // Return default allow decision for notifications
