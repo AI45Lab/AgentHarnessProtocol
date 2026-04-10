@@ -4,7 +4,7 @@
 
 ## The Problem
 
-Every AI agent framework (LangChain, AutoGPT, A3S Code, CrewAI...) has its own hooks/callbacks system. Policies written for one framework don't work with others. This creates:
+Every AI agent framework (Claude Code, Codex, OpenClaw, LangChain, AutoGPT, A3S Code, CrewAI...) has its own hooks/callbacks system. Policies written for one framework don't work with others. This creates:
 
 - **Vendor lock-in** — Safety rules are non-transferable
 - **Duplicated effort** — Same policies reimplemented per framework
@@ -17,7 +17,8 @@ AHP defines **one protocol** that any agent framework can implement. Once an age
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Agent Framework                         │
-│   (A3S Code, LangChain, AutoGPT, CrewAI, any other)         │
+│   (Claude Code, Codex, OpenClaw, LangChain, AutoGPT,       │
+│    A3S Code, CrewAI, any other)                            │
 │                          │                                   │
 │                          ▼                                   │
 │   ┌─────────────────────────────────────────────────────┐   │
