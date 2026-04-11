@@ -86,19 +86,18 @@ impl AhpClient {
     }
 
     /// Perform handshake with harness server
-    pub async fn handshake(&self) -> Result<HandshakeResponse> {
+    ///
+    /// # Arguments
+    ///
+    /// * `capabilities` - List of capability strings the agent supports
+    ///
+    pub async fn handshake(&self, capabilities: Vec<String>) -> Result<HandshakeResponse> {
         let request = HandshakeRequest {
             protocol_version: PROTOCOL_VERSION.to_string(),
             agent_info: AgentInfo {
                 framework: "a3s-ahp".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                capabilities: vec![
-                    "pre_action".to_string(),
-                    "post_action".to_string(),
-                    "pre_prompt".to_string(),
-                    "query".to_string(),
-                    "batch".to_string(),
-                ],
+                capabilities,
             },
             session_id: self.session_id.clone(),
             agent_id: self.agent_id.clone(),
@@ -126,12 +125,15 @@ impl AhpClient {
         Ok(handshake_response)
     }
 
-    /// Send an event and wait for decision (blocking events only)
+    /// Send an event and wait for decision (blocking events only).
+    ///
+    /// Returns the raw JSON decision payload. Callers should use the event type
+    /// to deserialize into the appropriate specialized decision type.
     pub async fn send_event(
         &self,
         event_type: EventType,
         payload: serde_json::Value,
-    ) -> Result<Decision> {
+    ) -> Result<serde_json::Value> {
         let event = AhpEvent {
             event_type,
             session_id: self.session_id.clone(),
@@ -154,23 +156,16 @@ impl AhpClient {
                 )));
             }
 
-            let decision: Decision = serde_json::from_value(
-                response
-                    .result
-                    .ok_or_else(|| AhpError::Protocol("Missing result".to_string()))?,
-            )?;
-
-            Ok(decision)
+            Ok(response
+                .result
+                .ok_or_else(|| AhpError::Protocol("Missing result".to_string()))?)
         } else {
             // Fire-and-forget notification
             let notification = AhpNotification::new("ahp/event", serde_json::to_value(&event)?);
             self.transport.send_notification(notification).await?;
 
             // Return default allow decision for notifications
-            Ok(Decision::Allow {
-                modified_payload: None,
-                metadata: None,
-            })
+            Ok(serde_json::json!({"decision": "allow"}))
         }
     }
 

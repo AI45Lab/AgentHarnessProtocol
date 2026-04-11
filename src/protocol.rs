@@ -85,6 +85,8 @@ pub enum EventType {
     RateLimit,
     /// User confirmation needed
     Confirmation,
+    /// Intent detection - detect user intent from prompt (blocking)
+    IntentDetection,
 }
 
 impl EventType {
@@ -101,6 +103,7 @@ impl EventType {
                 | EventType::Planning
                 | EventType::Reasoning
                 | EventType::Confirmation
+                | EventType::IntentDetection
         )
     }
 }
@@ -126,6 +129,7 @@ impl std::fmt::Display for EventType {
             EventType::Reasoning => write!(f, "reasoning"),
             EventType::RateLimit => write!(f, "rate_limit"),
             EventType::Confirmation => write!(f, "confirmation"),
+            EventType::IntentDetection => write!(f, "intent_detection"),
         }
     }
 }
@@ -914,9 +918,7 @@ pub enum RateLimitDecision {
     /// Queue the request
     Queue,
     /// Skip the action
-    Skip {
-        reason: String,
-    },
+    Skip { reason: String },
 }
 
 // ============================================================================
@@ -952,7 +954,53 @@ pub enum ConfirmationDecision {
     /// Approved
     Approve,
     /// Rejected
-    Reject {
-        reason: String,
+    Reject { reason: String },
+}
+
+// ============================================================================
+// Intent Detection Event
+// ============================================================================
+
+/// Intent detection event - fired before context perception to detect user intent
+///
+/// The harness can use LLM classification, keyword matching, or any custom logic
+/// to determine the user's intent. This allows multi-language support and more
+/// sophisticated intent recognition than local keyword matching.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentDetectionEvent {
+    pub session_id: String,
+    pub prompt: String,
+    pub workspace: String,
+    /// Optional language hint auto-detected from input
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_hint: Option<String>,
+}
+
+/// Optional hints about the detected intent target
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetHints {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+/// Decision for intent detection events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "lowercase")]
+pub enum IntentDetectionDecision {
+    /// Intent detected successfully
+    Allow {
+        /// Detected intent string: "locate" | "understand" | "retrieve" | "explore" | "reason" | "validate" | "compare" | "track"
+        detected_intent: String,
+        /// Confidence score 0.0 - 1.0
+        confidence: f32,
+        /// Optional target hints extracted from the prompt
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_hints: Option<TargetHints>,
     },
+    /// Skip intent detection - use local fallback
+    Block { reason: String },
 }

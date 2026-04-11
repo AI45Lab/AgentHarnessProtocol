@@ -63,11 +63,12 @@ pub use protocol::{
     AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest, BatchResponse,
     ConfirmationDecision, ContextPerceptionDecision, ContextPerceptionEvent, Decision,
     EventContext, EventType, Fact, FileContentSnippet, HandshakeRequest, HandshakeResponse,
-    HeartbeatEvent, HistoryItem, IdleDecision, IdleEvent, InjectedContext, MemoryRecallDecision,
-    MemoryRecallEvent, MemorySummary, PerceptionConstraints, PerceptionContext, PerceptionDomain,
-    PerceptionFreshness, PerceptionIntent, PerceptionModality, PerceptionTarget, PerceptionUrgency,
-    PlanningDecision, PlanningEvent, ProjectSummary, QueryRequest, QueryResponse, RateLimitDecision,
-    RateLimitEvent, ReasoningDecision, ReasoningEvent, SessionStats, SuccessEvent, TimeRange,
+    HeartbeatEvent, HistoryItem, IdleDecision, IdleEvent, InjectedContext, IntentDetectionDecision,
+    IntentDetectionEvent, MemoryRecallDecision, MemoryRecallEvent, MemorySummary,
+    PerceptionConstraints, PerceptionContext, PerceptionDomain, PerceptionFreshness,
+    PerceptionIntent, PerceptionModality, PerceptionTarget, PerceptionUrgency, PlanningDecision,
+    PlanningEvent, ProjectSummary, QueryRequest, QueryResponse, RateLimitDecision, RateLimitEvent,
+    ReasoningDecision, ReasoningEvent, SessionStats, SuccessEvent, TargetHints, TimeRange,
 };
 pub use server::AhpServer;
 pub use transport::{Transport, TransportConfig};

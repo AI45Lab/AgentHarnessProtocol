@@ -1,7 +1,7 @@
 //! HTTP server example
 
-use a3s_ahp::{AhpEvent, AhpServer, Decision, QueryRequest, QueryResponse, Result};
 use a3s_ahp::server::EventHandler;
+use a3s_ahp::{AhpEvent, AhpServer, Decision, QueryRequest, QueryResponse, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
