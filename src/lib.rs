@@ -1,4 +1,4 @@
-//! Agent Harness Protocol (AHP) v2.0
+//! Agent Harness Protocol (AHP) v2.3
 //!
 //! Universal, transport-agnostic protocol for supervising autonomous AI agents.
 //!
@@ -12,7 +12,8 @@
 //!
 //! - **Framework-agnostic** — Works with any agent system
 //! - **Language-neutral** — Harness servers can be written in any language
-//! - **Transport-flexible** — Supports stdio, HTTP, WebSocket, gRPC, Unix sockets
+//! - **Transport-flexible** — Supports stdio, HTTP, WebSocket, and Unix sockets;
+//!   gRPC is reserved as a feature placeholder
 //! - **Bidirectional** — Agents can query the harness for guidance
 //! - **Secure** — Built-in authentication and encryption support
 //!
@@ -29,11 +30,11 @@
 //! }).await?;
 //!
 //! // Send handshake
-//! let handshake = client.handshake().await?;
+//! let handshake = client.handshake(Vec::new()).await?;
 //! println!("Connected to: {}", handshake.harness_info.name);
 //!
 //! // Send pre-action event
-//! let decision = client.send_event(EventType::PreAction, serde_json::json!({
+//! let decision = client.send_event_decision(EventType::PreAction, serde_json::json!({
 //!     "action_type": "tool_call",
 //!     "tool_name": "bash",
 //!     "arguments": { "command": "ls -la" }
@@ -60,21 +61,23 @@ pub use auth::{AuthConfig, AuthMethod};
 pub use client::AhpClient;
 pub use error::{AhpError, Result};
 pub use protocol::{
-    AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest, BatchResponse,
-    ConfirmationDecision, ContextPerceptionDecision, ContextPerceptionEvent, Decision,
-    EventContext, EventType, Fact, FileContentSnippet, HandshakeRequest, HandshakeResponse,
+    AgentInfo, AhpErrorObject, AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest,
+    BatchResponse, ConfirmationDecision, ConfirmationEvent, ConfirmationType,
+    ContextPerceptionDecision, ContextPerceptionEvent, Decision, EventContext, EventType, Fact,
+    FileContentSnippet, HandshakeRequest, HandshakeResponse, HarnessConfig, HarnessInfo,
     HeartbeatEvent, HistoryItem, IdleDecision, IdleEvent, InjectedContext, IntentDetectionDecision,
     IntentDetectionEvent, MemoryRecallDecision, MemoryRecallEvent, MemorySummary,
     PerceptionConstraints, PerceptionContext, PerceptionDomain, PerceptionFreshness,
     PerceptionIntent, PerceptionModality, PerceptionTarget, PerceptionUrgency, PlanningDecision,
-    PlanningEvent, ProjectSummary, QueryRequest, QueryResponse, RateLimitDecision, RateLimitEvent,
-    ReasoningDecision, ReasoningEvent, SessionStats, SuccessEvent, TargetHints, TimeRange,
+    PlanningEvent, PlanningStrategy, ProjectSummary, QueryRequest, QueryResponse,
+    RateLimitDecision, RateLimitEvent, RateLimitType, ReasoningDecision, ReasoningEvent,
+    ReasoningType, SessionStats, SuccessEvent, TargetHints, TimeRange,
 };
 pub use server::AhpServer;
 pub use transport::{Transport, TransportConfig};
 
 /// Protocol version
-pub const PROTOCOL_VERSION: &str = "2.2";
+pub const PROTOCOL_VERSION: &str = "2.3";
 
 /// Default timeout for blocking requests (milliseconds)
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;

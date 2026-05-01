@@ -60,11 +60,11 @@ AHP defines **one protocol** that any agent framework can implement. Once an age
 | `memory_recall` | Model retrieves from memory | Yes |
 | `planning` | Task decomposition | Yes |
 | `reasoning` | CoT/ToT reasoning | Yes |
-| `idle` | Agent is idle | No |
+| `idle` | Agent is idle and asks whether background work should run | Yes |
 | `heartbeat` | Periodic status | No |
 | `success` | Operation succeeded | No |
 | `error` | Operation failed | No |
-| `rate_limit` | Rate limit hit | No |
+| `rate_limit` | Rate limit hit and needs backpressure decision | Yes |
 | `confirmation` | Human approval needed | Yes |
 
 ### Decision Types
@@ -76,6 +76,9 @@ AHP defines **one protocol** that any agent framework can implement. Once an age
 | `Modify` | Proceed with harness-modified parameters |
 | `Defer` | Retry after specified delay |
 | `Escalate` | Forward to human operator |
+
+Batch requests only support events that return the generic `Decision` shape.
+Harness points with specialized decision payloads must be sent individually.
 
 ## Harness Points (驾驭点)
 
@@ -430,7 +433,7 @@ AHP works over any transport layer:
 - **stdio** — Local subprocess (default, simplest)
 - **HTTP** — Remote harness, web deployment
 - **WebSocket** — Bidirectional streaming, low latency
-- **gRPC** — High-performance RPC
+- **gRPC** — High-performance RPC (feature placeholder; not implemented yet)
 - **Unix Socket** — Local IPC, lower overhead than stdio
 
 The **protocol** (message format) is identical across transports. Choose the transport that fits your deployment.
@@ -480,7 +483,7 @@ let client = AhpClient::new(Transport::Stdio {
     args: vec!["harness.py".into()],
 }).await?;
 
-let decision = client.send_event(
+let decision = client.send_event_decision(
     EventType::PreAction,
     serde_json::json!({
         "action_type": "tool_call",
@@ -535,7 +538,9 @@ ahp/
 │       ├── mod.rs
 │       ├── stdio.rs
 │       ├── http.rs
-│       └── websocket.rs
+│       ├── websocket.rs
+│       ├── unix_socket.rs
+│       └── grpc.rs
 ├── examples/
 │   ├── simple_client.rs
 │   ├── simple_server.py
@@ -549,7 +554,7 @@ ahp/
 
 - **Framework-agnostic** — Any agent can implement AHP
 - **Language-neutral** — Harnesses can be written in any language
-- **Transport-flexible** — Works over stdio, HTTP, WebSocket, gRPC, Unix sockets
+- **Transport-flexible** — Works over stdio, HTTP, WebSocket, and Unix sockets; gRPC is reserved as a feature placeholder
 - **Bidirectional** — Agents can query harness, not just receive commands
 - **Extensible** — New event types via capability negotiation
 - **Structured context** — Rich context injection for informed decisions
@@ -557,7 +562,7 @@ ahp/
 ## Version
 
 - **Protocol:** 2.3
-- **This crate:** 2.3.0
+- **This crate:** 2.3.1
 
 ## License
 

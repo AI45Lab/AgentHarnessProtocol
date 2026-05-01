@@ -1,7 +1,7 @@
 //! stdio transport implementation
 
 use crate::transport::TransportLayer;
-use crate::{AhpError, AhpNotification, AhpRequest, AhpResponse, Result};
+use crate::{AhpError, AhpNotification, AhpRequest, AhpResponse, Result, TransportConfig};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,11 +15,21 @@ pub struct StdioTransport {
     stdout: Arc<Mutex<BufReader<ChildStdout>>>,
     _child: Arc<Mutex<Child>>,
     pending_requests: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<AhpResponse>>>>,
+    timeout_ms: u64,
 }
 
 impl StdioTransport {
     /// Spawn a child process and create a stdio transport
     pub async fn spawn(program: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<Self> {
+        Self::spawn_with_config(program, args, &TransportConfig::default()).await
+    }
+
+    /// Spawn a child process and create a stdio transport with explicit config.
+    pub async fn spawn_with_config(
+        program: impl AsRef<str>,
+        args: &[impl AsRef<str>],
+        config: &TransportConfig,
+    ) -> Result<Self> {
         let mut cmd = Command::new(program.as_ref());
         for arg in args {
             cmd.arg(arg.as_ref());
@@ -47,6 +57,7 @@ impl StdioTransport {
             stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
             _child: Arc::new(Mutex::new(child)),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            timeout_ms: config.timeout_ms,
         };
 
         // Start background task to read responses
@@ -87,26 +98,39 @@ impl StdioTransport {
 impl TransportLayer for StdioTransport {
     async fn send_request(&self, request: AhpRequest) -> Result<AhpResponse> {
         let (tx, rx) = tokio::sync::oneshot::channel();
+        let request_id = request.id.clone();
+        let json = serde_json::to_string(&request)?;
 
         // Register pending request
         {
             let mut pending = self.pending_requests.lock().await;
-            pending.insert(request.id.clone(), tx);
+            pending.insert(request_id.clone(), tx);
         }
 
         // Send request
         let mut stdin = self.stdin.lock().await;
-        let json = serde_json::to_string(&request)?;
-        stdin.write_all(json.as_bytes()).await?;
-        stdin.write_all(b"\n").await?;
-        stdin.flush().await?;
+        if let Err(e) = stdin.write_all(json.as_bytes()).await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
+        if let Err(e) = stdin.write_all(b"\n").await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
+        if let Err(e) = stdin.flush().await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
         drop(stdin);
 
         // Wait for response with timeout
-        match tokio::time::timeout(std::time::Duration::from_millis(10_000), rx).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(self.timeout_ms), rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(AhpError::ConnectionClosed),
-            Err(_) => Err(AhpError::Timeout(10_000)),
+            Err(_) => {
+                self.pending_requests.lock().await.remove(&request_id);
+                Err(AhpError::Timeout(self.timeout_ms))
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 //! Unix socket transport implementation
 
 use crate::transport::TransportLayer;
-use crate::{AhpError, AhpNotification, AhpRequest, AhpResponse, Result};
+use crate::{AhpError, AhpNotification, AhpRequest, AhpResponse, Result, TransportConfig};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,11 +15,20 @@ pub struct UnixSocketTransport {
     writer: Arc<Mutex<tokio::io::WriteHalf<UnixStream>>>,
     _reader_task: Arc<tokio::task::JoinHandle<()>>, // Keeps the reader half alive
     pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<AhpResponse>>>>,
+    timeout_ms: u64,
 }
 
 impl UnixSocketTransport {
     /// Connect to a Unix socket server
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self> {
+        Self::connect_with_config(path, &TransportConfig::default()).await
+    }
+
+    /// Connect to a Unix socket server with explicit config.
+    pub async fn connect_with_config(
+        path: impl AsRef<Path>,
+        config: &TransportConfig,
+    ) -> Result<Self> {
         let stream = UnixStream::connect(path.as_ref()).await.map_err(|e| {
             AhpError::Transport(format!(
                 "Failed to connect to {}: {}",
@@ -60,6 +69,7 @@ impl UnixSocketTransport {
             writer: Arc::new(Mutex::new(writer)),
             _reader_task: Arc::new(reader_task),
             pending_requests,
+            timeout_ms: config.timeout_ms,
         };
 
         Ok(transport)
@@ -70,26 +80,39 @@ impl UnixSocketTransport {
 impl TransportLayer for UnixSocketTransport {
     async fn send_request(&self, request: AhpRequest) -> Result<AhpResponse> {
         let (tx, rx) = oneshot::channel();
+        let request_id = request.id.clone();
+        let json = serde_json::to_string(&request)?;
 
         // Register pending request
         {
             let mut pending = self.pending_requests.lock().await;
-            pending.insert(request.id.clone(), tx);
+            pending.insert(request_id.clone(), tx);
         }
 
         // Send request
         let mut writer = self.writer.lock().await;
-        let json = serde_json::to_string(&request)?;
-        writer.write_all(json.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
+        if let Err(e) = writer.write_all(json.as_bytes()).await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
+        if let Err(e) = writer.write_all(b"\n").await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
+        if let Err(e) = writer.flush().await {
+            self.pending_requests.lock().await.remove(&request_id);
+            return Err(e.into());
+        }
         drop(writer);
 
         // Wait for response with timeout
-        match tokio::time::timeout(std::time::Duration::from_millis(10_000), rx).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(self.timeout_ms), rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(AhpError::ConnectionClosed),
-            Err(_) => Err(AhpError::Timeout(10_000)),
+            Err(_) => {
+                self.pending_requests.lock().await.remove(&request_id);
+                Err(AhpError::Timeout(self.timeout_ms))
+            }
         }
     }
 

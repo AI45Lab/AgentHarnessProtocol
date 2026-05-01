@@ -1,6 +1,6 @@
 [package]
 name = "a3s-ahp"
-version = "2.3.0"
+version = "2.3.1"
 edition = "2021"
 authors = ["A3S Lab Team"]
 license = "MIT"
@@ -15,10 +15,10 @@ path = "src/lib.rs"
 default = ["stdio"]
 stdio = []
 http = ["reqwest", "axum", "tower", "tower-http"]
-websocket = ["tokio-tungstenite", "futures-util"]
+websocket = ["tokio-tungstenite", "futures-util", "url"]
 grpc = ["tonic", "prost", "prost-types"]
 unix-socket = ["tokio/net"]
-all-transports = ["stdio", "http", "websocket", "grpc", "unix-socket"]
+all-transports = ["stdio", "http", "websocket", "unix-socket"]
 
 [dependencies]
 # Core dependencies
@@ -42,6 +42,7 @@ tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
 # WebSocket transport
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["rustls-tls-native-roots", "connect"], optional = true }
 futures-util = { version = "0.3", optional = true }
+url = { version = "2.5", optional = true }
 
 # gRPC transport
 tonic = { version = "0.12", optional = true }

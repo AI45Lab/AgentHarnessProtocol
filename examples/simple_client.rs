@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     // Perform handshake
-    let handshake = client.handshake().await?;
+    let handshake = client.handshake(Vec::new()).await?;
     println!(
         "Connected to: {} v{}",
         handshake.harness_info.name, handshake.harness_info.version
@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Send pre-action event
     let decision = client
-        .send_event(
+        .send_event_decision(
             EventType::PreAction,
             serde_json::json!({
                 "action_type": "tool_call",

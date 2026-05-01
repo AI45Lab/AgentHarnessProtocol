@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Connected to HTTP harness server");
 
     // Perform handshake
-    let handshake = client.handshake().await?;
+    let handshake = client.handshake(Vec::new()).await?;
     println!("✓ Handshake successful");
     println!(
         "  Harness: {} v{}",
@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
     // Send pre-action event
     println!("\nSending pre-action event...");
     let decision = client
-        .send_event(
+        .send_event_decision(
             EventType::PreAction,
             serde_json::json!({
                 "action_type": "tool_call",

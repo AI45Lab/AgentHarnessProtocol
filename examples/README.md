@@ -1,6 +1,6 @@
 # AHP Examples
 
-This directory contains examples demonstrating different transport layers and usage patterns for the Agent Harness Protocol (AHP) v2.0.
+This directory contains examples demonstrating different transport layers and usage patterns for the Agent Harness Protocol (AHP) v2.3.
 
 ## Examples
 
@@ -121,7 +121,10 @@ The harness can return different decision types:
 
 ### Batch Processing
 
-Send multiple events in a single request:
+Send multiple generic-decision events in a single request. Events that return
+specialized decisions, such as `context_perception`, `memory_recall`, `planning`,
+`reasoning`, `rate_limit`, `confirmation`, `intent_detection`, and `idle`, must
+be sent individually.
 
 ```rust
 let events = vec![event1, event2, event3];
@@ -172,13 +175,12 @@ cargo test --features websocket
 - **stdio**: No additional dependencies (default)
 - **http**: Requires `reqwest`, `axum`, `tower`, `tower-http`
 - **websocket**: Requires `tokio-tungstenite`, `futures-util`
-- **grpc**: Requires `tonic`, `prost` (not yet implemented)
-- **unix-socket**: Requires `tokio/net` (not yet implemented)
+- **grpc**: Requires `tonic`, `prost`; available as a feature placeholder, not included in `all-transports` until implemented
+- **unix-socket**: Requires `tokio/net`
 
 ## Next Steps
 
 - Implement gRPC transport for high-performance scenarios
-- Implement Unix socket transport for local IPC
 - Add more authentication methods (mTLS, OAuth)
 - Add metrics and observability examples
 - Add integration tests
