@@ -1,449 +1,83 @@
 # Agent Harness Protocol (AHP) v2.3
 
-**Universal supervision protocol for autonomous AI agents**
+**A transport-agnostic supervision protocol for autonomous AI agents.**
 
-## The Problem
+AHP separates agent execution from policy enforcement. An agent emits structured
+events at meaningful control points, a harness evaluates those events, and the
+agent applies the returned decision before continuing.
 
-Every AI agent framework (Claude Code, Codex, OpenClaw, LangChain, AutoGPT, A3S Code, CrewAI...) has its own hooks/callbacks system. Policies written for one framework don't work with others. This creates:
+The first principle is simple: **the component that acts should not be the only
+component that decides whether the action is safe, useful, authorized, or
+well-contextualized.**
 
-- **Vendor lock-in** — Safety rules are non-transferable
-- **Duplicated effort** — Same policies reimplemented per framework
-- **No interoperability** — Agents can't be composed across frameworks
+## Why AHP Exists
 
-## The Solution
+Agent frameworks expose different hook systems, callback shapes, and transport
+assumptions. That makes policies hard to reuse:
 
-AHP defines **one protocol** that any agent framework can implement. Once an agent supports AHP, it can use any AHP-compatible supervisor (harness).
+- A safety policy written for one framework usually cannot supervise another.
+- Audit, approval, memory, and context logic gets duplicated per runtime.
+- Operational controls become coupled to the agent implementation.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Agent Framework                         │
-│   (Claude Code, Codex, OpenClaw, LangChain, AutoGPT,       │
-│    A3S Code, CrewAI, any other)                            │
-│                          │                                   │
-│                          ▼                                   │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │  AHP Client                                           │   │
-│   │  • Intercepts agent actions                          │   │
-│   │  • Sends events to harness                           │   │
-│   │  • Enforces harness decisions                        │   │
-│   └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     AHP Harness                             │
-│   (Policy engine, safety rules, audit logging, etc.)        │
-│                                                             │
-│   Receives events → Applies policies → Returns decisions     │
-│   Allow / Block / Modify / Defer / Escalate                │
-└─────────────────────────────────────────────────────────────┘
-```
+AHP defines a small shared contract between an agent and a harness:
 
-## Core Concepts
+1. The agent sends events before or after meaningful work.
+2. Blocking events are JSON-RPC requests and must receive a decision.
+3. Fire-and-forget events are JSON-RPC notifications and do not block execution.
+4. The harness owns policy, enrichment, approval, audit, and backpressure logic.
+5. The agent owns enforcement of returned decisions.
 
-### Agent ↔ Harness Communication
+## Design Principles
 
-1. **Agent sends events** to harness at key decision points
-2. **Harness responds** with decisions (allow, block, modify...)
-3. **Agent enforces** the decision before proceeding
+- **Protocol before implementation** — JSON-RPC message shape is the contract;
+  Rust is one implementation.
+- **Transport independence** — stdio, HTTP, WebSocket, and Unix sockets carry
+  the same protocol semantics.
+- **Fail closed for control paths** — handler failures in batch decisions become
+  `Block` decisions, not silent allows.
+- **Explicit synchronization** — blocking events use requests; non-blocking
+  telemetry uses notifications.
+- **Typed decisions where shape matters** — context, memory, planning,
+  reasoning, rate limit, confirmation, idle, and intent detection use specialized
+  decision payloads.
+- **Generic decisions where policy is enough** — action and prompt gates use the
+  generic `Decision` shape.
+- **Capability negotiation first** — clients handshake before sending events.
+- **Bounded recursion and batching** — harness configuration can limit event
+  depth and batch size.
 
-### Event Types
+## Current Features
 
-| Event | When | Blocking |
-|-------|------|----------|
-| `pre_action` | Before any agent action | Yes |
-| `post_action` | After action completes | No |
-| `pre_prompt` | Before LLM call | Yes |
-| `post_response` | After LLM response | No |
-| `intent_detection` | Detect user intent from prompt | Yes |
-| `context_perception` | Model needs workspace knowledge | Yes |
-| `memory_recall` | Model retrieves from memory | Yes |
-| `planning` | Task decomposition | Yes |
-| `reasoning` | CoT/ToT reasoning | Yes |
-| `idle` | Agent is idle and asks whether background work should run | Yes |
-| `heartbeat` | Periodic status | No |
-| `success` | Operation succeeded | No |
-| `error` | Operation failed | No |
-| `rate_limit` | Rate limit hit and needs backpressure decision | Yes |
-| `confirmation` | Human approval needed | Yes |
+- JSON-RPC 2.0 protocol messages.
+- Handshake with major-version compatibility checks.
+- Rust client with stdio, HTTP, WebSocket, and Unix socket transports.
+- Rust server dispatch for requests and notifications.
+- Optional API key and bearer-token auth for HTTP and WebSocket clients.
+- Transport timeout configuration.
+- Response validation for JSON-RPC version, request id, errors, and missing
+  results.
+- Typed harness handlers for specialized event families.
+- Batch requests for generic-decision events.
+- Server builder methods for advertised harness info and validation limits.
+- gRPC feature placeholder reserved for future implementation.
 
-### Decision Types
+## Protocol Version
 
-| Decision | Meaning |
-|----------|---------|
-| `Allow` | Proceed (optionally with modified payload) |
-| `Block` | Cancel, return error to agent |
-| `Modify` | Proceed with harness-modified parameters |
-| `Defer` | Retry after specified delay |
-| `Escalate` | Forward to human operator |
+- Protocol version: `2.3`
+- Crate version: `2.3.1`
+- Rust crate: `a3s-ahp`
+- Repository: `https://github.com/A3S-Lab/AgentHarnessProtocol`
 
-Batch requests only support events that return the generic `Decision` shape.
-Harness points with specialized decision payloads must be sent individually.
+The crate can receive patch releases without changing the protocol version. A
+protocol major-version mismatch is rejected during handshake.
 
-## Harness Points (驾驭点)
+## Message Model
 
-AHP v2.3 introduces **harness points** — structured hooks that intercept agent operations at specific moments.
+AHP uses JSON-RPC 2.0.
 
-### Event Flow Diagram
-
-```
-                        ┌─────────────────────────────────────────┐
-                        │              Agent Loop                  │
-                        └─────────────────────────────────────────┘
-                                              │
-                    ┌─────────────────────────┼─────────────────────────┐
-                    │                         │                         │
-                    ▼                         ▼                         ▼
-            ┌───────────────┐        ┌───────────────┐        ┌───────────────┐
-            │   Perceive    │        │   Remember    │        │    Plan       │
-            │               │        │               │        │               │
-            │ PreContext    │        │ PreMemory     │        │ PrePlanning   │
-            │ Perception    │        │ Recall        │        │               │
-            └───────┬───────┘        └───────┬───────┘        └───────┬───────┘
-                    │                         │                         │
-                    ▼                         ▼                         ▼
-            ┌───────────────┐        ┌───────────────┐        ┌───────────────┐
-            │    Think     │        │    Act        │        │   Observe     │
-            │               │        │               │        │               │
-            │ PreReasoning  │        │ PreToolUse    │        │ OnSuccess     │
-            │ PostReasoning │        │ PostToolUse   │        │ OnError       │
-            └───────────────┘        └───────┬───────┘        └───────────────┘
-                                              │
-                                              ▼
-                                    ┌───────────────────┐
-                                    │   Confirm if      │
-                                    │   needed (block)  │
-                                    │                   │
-                                    │ OnConfirmation    │
-                                    └───────────────────┘
-```
-
-### Harness Points by Category
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        BLOCKING HARNESS POINTS                               │
-│                  (Agent waits for harness decision before proceeding)         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────┐ │
-│   │   Perceive   │───▶│   Remember   │───▶│    Plan     │───▶│   Think   │ │
-│   │              │    │              │    │             │    │           │ │
-│   │ PreContext   │    │ PreMemory    │    │ PrePlanning │    │PreReason- │ │
-│   │ Perception   │    │ Recall       │    │             │    │   ing     │ │
-│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └─────┬─────┘ │
-│          │                   │                   │                   │       │
-│          ▼                   ▼                   ▼                   ▼       │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────┐ │
-│   │   Allow      │    │   Allow      │    │   Allow      │    │  Allow    │ │
-│   │   +Inject   │    │   +Recall    │    │   +Plan     │    │  +Reason  │ │
-│   │   Context   │    │   Memory     │    │   Subtasks  │    │   Hints   │ │
-│   ├──────────────┤    ├──────────────┤    ├──────────────┤    ├───────────┤ │
-│   │   Block      │    │   Block      │    │   Block      │    │   Block   │ │
-│   │   (skip)     │    │   (empty)    │    │   (abort)   │    │   (skip)  │ │
-│   └──────────────┘    └──────────────┘    └──────────────┘    └───────────┘ │
-│                                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                 │
-│   │     Act      │───▶│   Confirm    │───▶│   Prompt     │                 │
-│   │              │    │              │    │              │                 │
-│   │ PreToolUse   │    │ OnConfirma-  │    │ PrePrompt    │                 │
-│   │              │    │   tion       │    │              │                 │
-│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                 │
-│          │                   │                   │                          │
-│          ▼                   ▼                   ▼                          │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                 │
-│   │   Allow      │    │   Allow      │    │   Allow      │                 │
-│   │   +Modify    │    │   +User      │    │   +Inject    │                 │
-│   │   Args       │    │   Input      │    │   System     │                 │
-│   ├──────────────┤    ├──────────────┤    ├──────────────┤                 │
-│   │   Block      │    │   Block      │    │   Block      │                 │
-│   │   (reject)   │    │   (cancel)   │    │   (override) │                 │
-│   └──────────────┘    └──────────────┘    └──────────────┘                 │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     FIRE-AND-FORGET EVENTS                                  │
-│                    (Agent continues immediately, no wait)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   OnSuccess ──▶ Record to audit log, update metrics, trigger workflows      │
-│                                                                              │
-│   OnError   ──▶ Record to audit log, increment error counters, alert        │
-│                                                                              │
-│   OnRate    ──▶ Record to audit log, apply backpressure, alert              │
-│   Limit                                                                │
-│                                                                              │
-│   Post      ──▶ Record to audit log, update session stats                   │
-│   ToolUse                                                        │
-│                                                                              │
-│   Post      ──▶ Record to audit log, store reasoning trace                  │
-│   Reasoning                                                       │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Context Perception (上下文感知)
-
-When the model needs to understand its workspace, `context_perception` fires. This is the most nuanced harness point.
-
-### Perception Intent Matrix (四象限)
-
-```
-                         TARGET TYPE
-                    ┌─────────────┬─────────────┐
-                    │   ENTITY    │  LOCATION   │
-              ┌─────┼─────────────┼─────────────┤
-    INTENT    │RECO-│  "What is   │  "Where is  │
-              │GNIZE│   X?"       │   Y?"       │
-              ├─────┼─────────────┼─────────────┤
-              │UNDER│  "What does │  "What is   │
-              │STAND│   X do?"    │   at Y?"    │
-              ├─────┼─────────────┼─────────────┤
-              │EXPL-│  "How does │  "What      │
-              │ORE  │   X work?"  │   exists    │
-              │     │             │   around Y?"│
-              ├─────┼─────────────┼─────────────┤
-              │RETR-│  "Find all  │  "Find all  │
-              │IEVE │   X"        │   things at │
-              │     │             │   Y"        │
-              └─────┴─────────────┴─────────────┘
-
-
-                         URGENCY / DOMAIN
-              ┌─────────────┬─────────────┬─────────────┐
-              │   CODING    │   RESEARCH  │  OPERATIONS │
-     ┌────────┼─────────────┼─────────────┼─────────────┤
-     │CRITICAL│ Audit code  │ Urgent fact │ Immediate   │
-     │        │ security    │ lookup      │ rollback    │
-     ├────────┼─────────────┼─────────────┼─────────────┤
-     │  HIGH  │ Feature     │ Paper deep  │ Deploy with │
-     │        │ context     │ dive        │ canary      │
-     ├────────┼─────────────┼─────────────┼─────────────┤
-     │ NORMAL │ Normal dev  │ General      │ Standard    │
-     │        │ docs        │ search      │ ops         │
-     ├────────┼─────────────┼─────────────┼─────────────┤
-     │   LOW  │ Cleanup,    │ Background  │ Batch jobs, │
-     │        │ refactor    │ learning    │ reports     │
-     └────────┴─────────────┴─────────────┴─────────────┘
-```
-
-### Context Injection Flow
-
-```
-    Agent                          AHP Client                      Harness
-      │                                │                               │
-      │  Model needs context           │                               │
-      │  ────────────────────────────▶ │                               │
-      │                                │                               │
-      │                     ┌──────────┴──────────┐                    │
-      │                     │ PreContextPerception │                    │
-      │                     │  event created      │                    │
-      │                     │  - intent            │                    │
-      │                     │  - target            │                    │
-      │                     │  - domain            │                    │
-      │                     │  - query             │                    │
-      │                     │  - constraints       │                    │
-      │                     └──────────┬──────────┘                    │
-      │                                │                               │
-      │                                │  AhpEvent                     │
-      │                                │  (blocking)                   │
-      │                                │ ─────────────────────────────▶│
-      │                                │                               │
-      │                                │                 ┌────────────┴────────┐
-      │                                │                 │ Policy Evaluation  │
-      │                                │                 │ - Check permissions │
-      │                                │                 │ - Search knowledge  │
-      │                                │                 │ - Retrieve files    │
-      │                                │                 │ - Build context      │
-      │                                │                 └────────────┬────────┘
-      │                                │                               │
-      │                                │  Decision {                    │
-      │                                │    decision: "allow",          │
-      │                                │    injected_context: {         │
-      │                                │      facts: [...],             │
-      │                                │      file_contents: [...],    │
-      │                                │      project_summary: {...}   │
-      │                                │    }                          │
-      │                                │  }                            │
-      │                                │ ◀─────────────────────────────│
-      │                                │                               │
-      │                     ┌──────────┴──────────┐                     │
-      │                     │ PostContextPerception│                     │
-      │                     │  - facts_retrieved  │                     │
-      │                     │  - files_retrieved  │                     │
-      │                     └──────────┬──────────┘                     │
-      │                                │                               │
-      │  Context injected              │                               │
-      │  into model                    │                               │
-      │ ◀──────────────────────────────│                               │
-      │                                │                               │
-```
-
-## Intent Detection (意图检测)
-
-`intent_detection` fires on **every prompt** before `context_perception`. The harness determines the user's intent using LLM classification, keyword matching, or any custom logic. This enables:
-
-- **Multi-language intent recognition** — Harness can use LLM for non-English prompts
-- **Centralized intent taxonomy** — Update detection logic without changing agent code
-- **Custom detection rules** — Organization-specific intent patterns
-
-### Intent Values
-
-| Intent | Triggered By | Description |
-|--------|-------------|-------------|
-| `locate` | "where is", "find", "search for" | User wants to find files/functions |
-| `understand` | "how does", "explain", "what does" | User wants to understand code |
-| `retrieve` | "remember", "earlier", "previous" | User references past context |
-| `explore` | "project structure", "what files" | User wants overview |
-| `reason` | "why did", "why is", "cause" | User asks why something happened |
-| `validate` | "verify", "check if", "debug" | User wants to verify correctness |
-| `compare` | "difference between", "compare" | User wants comparison |
-| `track` | "status", "progress", "history" | User asks for status |
-
-### IntentDetection Flow
-
-```
-    Agent                          AHP Client                      Harness
-      │                                │                               │
-      │  User prompt                  │                               │
-      │  ────────────────────────────▶│                               │
-      │                                │                               │
-      │                     ┌──────────┴──────────┐                    │
-      │                     │ IntentDetection    │                    │
-      │                     │  event created    │                    │
-      │                     │  - prompt        │                    │
-      │                     │  - workspace     │                    │
-      │                     │  - language_hint │                    │
-      │                     └──────────┬──────────┘                    │
-      │                                │                               │
-      │                                │  AhpEvent                     │
-      │                                │  (blocking)                   │
-      │                                │──────────────────────────────▶│
-      │                                │                               │
-      │                                │                 ┌────────────┴────────┐
-      │                                │                 │ LLM classification │
-      │                                │                 │ or custom logic   │
-      │                                │                 └────────────┬────────┘
-      │                                │                               │
-      │                                │  Decision {                    │
-      │                                │    decision: "allow",         │
-      │                                │    detected_intent: "locate",│
-      │                                │    confidence: 0.95,         │
-      │                                │    target_hints: {           │
-      │                                │      target_type: "function",│
-      │                                │      target_name: "auth"    │
-      │                                │    }                        │
-      │                                │  }                          │
-      │                                │◀─────────────────────────────│
-      │                                │                               │
-      │  Intent detected              │                               │
-      │  + PreContextPerception       │                               │
-      │  follows with full context    │                               │
-      │ ◀──────────────────────────────│                              │
-      │                                │                               │
-```
-
-### IntentDetection Decision Types
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        INTENT DETECTION DECISION                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ALLOW (intent detected)                                                   │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │  {                                                                  │  │
-│   │    "decision": "allow",                                             │  │
-│   │    "detected_intent": "locate",                                    │  │
-│   │    "confidence": 0.95,                                              │  │
-│   │    "target_hints": {                                                │  │
-│   │      "target_type": "function",                                     │  │
-│   │      "target_name": "authenticate",                                 │  │
-│   │      "domain": "coding"                                             │  │
-│   │    }                                                                │  │
-│   │  }                                                                  │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│   BLOCK (skip context perception)                                            │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │  {                                                                  │  │
-│   │    "decision": "block",                                             │  │
-│   │    "reason": "intent detection disabled by policy"                 │  │
-│   │  }                                                                  │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### ContextPerception Decision Types
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        CONTEXT INJECTION DECISION                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ALLOW (with context)                                                       │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │  {                                                                  │  │
-│   │    "decision": "allow",                                             │  │
-│   │    "injected_context": {                                            │  │
-│   │      "facts": [                                                     │  │
-│   │        {"content": "...", "source": "...", "confidence": 0.95}       │  │
-│   │      ],                                                              │  │
-│   │      "file_contents": [                                             │  │
-│   │        {"path": "...", "snippet": "...", "relevance_score": 0.9}   │  │
-│   │      ],                                                              │  │
-│   │      "project_summary": {                                           │  │
-│   │        "project_name": "...", "language": "...", "key_files": [...] │  │
-│   │      }                                                              │  │
-│   │    }                                                                │  │
-│   │  }                                                                  │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│   BLOCK (skip context)                                                       │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │  {                                                                  │  │
-│   │    "decision": "block",                                             │  │
-│   │    "reason": "context forbidden by policy"                          │  │
-│   │  }                                                                  │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│   REFINE (need more info)                                                    │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │  {                                                                  │  │
-│   │    "decision": "refine",                                            │  │
-│   │    "hints": {                                                       │  │
-│   │      "suggested_intent": "understand",                              │  │
-│   │      "suggested_domain": "coding",                                  │  │
-│   │      "clarifying_question": "What specific aspect of X?"             │  │
-│   │    }                                                                │  │
-│   │  }                                                                  │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Transport Agnostic
-
-AHP works over any transport layer:
-
-- **stdio** — Local subprocess (default, simplest)
-- **HTTP** — Remote harness, web deployment
-- **WebSocket** — Bidirectional streaming, low latency
-- **gRPC** — High-performance RPC (feature placeholder; not implemented yet)
-- **Unix Socket** — Local IPC, lower overhead than stdio
-
-The **protocol** (message format) is identical across transports. Choose the transport that fits your deployment.
-
-## Protocol Format
-
-AHP uses **JSON-RPC 2.0**:
+### Blocking Event Request
 
 ```json
-// Agent → Harness (request)
 {
   "jsonrpc": "2.0",
   "id": "req-123",
@@ -452,117 +86,400 @@ AHP uses **JSON-RPC 2.0**:
     "event_type": "pre_action",
     "session_id": "sess-abc",
     "agent_id": "agent-xyz",
-    "timestamp": "2026-04-10T12:00:00Z",
+    "timestamp": "2026-05-01T00:00:00Z",
     "depth": 0,
-    "payload": { ... },
-    "context": { ... }
+    "payload": {
+      "tool_name": "bash",
+      "arguments": {
+        "command": "cargo test"
+      }
+    }
   }
 }
+```
 
-// Harness → Agent (response)
+### Decision Response
+
+```json
 {
   "jsonrpc": "2.0",
   "id": "req-123",
   "result": {
-    "decision": "allow",
-    "reason": null,
-    "modified_payload": null
+    "decision": "allow"
   }
 }
 ```
 
-## Quick Start
+### Fire-And-Forget Notification
 
-### Rust Client
-
-```rust
-use a3s_ahp::{AhpClient, Transport, EventType, Decision};
-
-let client = AhpClient::new(Transport::Stdio {
-    program: "python3".into(),
-    args: vec!["harness.py".into()],
-}).await?;
-
-let decision = client.send_event_decision(
-    EventType::PreAction,
-    serde_json::json!({
-        "action_type": "tool_call",
-        "tool_name": "bash",
-        "arguments": { "command": "ls -la" }
-    })
-).await?;
-
-match decision {
-    Decision::Allow { .. } => println!("Proceed"),
-    Decision::Block { reason, .. } => println!("Blocked: {}", reason),
-    _ => {}
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ahp/event",
+  "params": {
+    "event_type": "post_action",
+    "session_id": "sess-abc",
+    "agent_id": "agent-xyz",
+    "timestamp": "2026-05-01T00:00:02Z",
+    "depth": 0,
+    "payload": {
+      "status": "ok"
+    }
+  }
 }
 ```
 
-### Python Harness
+## Methods
 
-```python
-import json, sys
+| Method | Direction | Purpose |
+| --- | --- | --- |
+| `ahp/handshake` | Agent to harness | Negotiate protocol compatibility, capabilities, and harness limits. |
+| `ahp/event` | Agent to harness | Send one event as a request or notification depending on event type. |
+| `ahp/query` | Agent to harness | Ask the harness for extra information. |
+| `ahp/batch` | Agent to harness | Send multiple generic-decision events in one request. |
 
-for line in sys.stdin:
-    event = json.loads(line)
-    req_id = event.get("id")
+## Event Types
 
-    if event["method"] == "ahp/event":
-        event_type = event["params"]["event_type"]
-        payload = event["params"]["payload"]
+| Event | Timing | Blocking | Decision Shape | Batchable |
+| --- | --- | --- | --- | --- |
+| `pre_action` | Before a tool/action executes | Yes | `Decision` | Yes |
+| `post_action` | After a tool/action completes | No | Notification | Yes |
+| `pre_prompt` | Before an LLM request | Yes | `Decision` | Yes |
+| `post_response` | After an LLM response | No | Notification | Yes |
+| `session_start` | Session begins | No | Notification | Yes |
+| `session_end` | Session ends | No | Notification | Yes |
+| `error` | Operation failed | No | Notification | Yes |
+| `heartbeat` | Periodic liveness/status | No | Notification | Yes |
+| `success` | Operation succeeded | No | Notification | Yes |
+| `idle` | Agent asks whether background work should run | Yes | `IdleDecision` | No |
+| `intent_detection` | Classify user intent before deeper context work | Yes | `IntentDetectionDecision` | No |
+| `context_perception` | Retrieve or inject workspace context | Yes | `ContextPerceptionDecision` | No |
+| `memory_recall` | Retrieve facts from memory | Yes | `MemoryRecallDecision` | No |
+| `planning` | Select or modify planning strategy | Yes | `PlanningDecision` | No |
+| `reasoning` | Provide reasoning hints or block reasoning | Yes | `ReasoningDecision` | No |
+| `rate_limit` | Decide backpressure after a limit is hit | Yes | `RateLimitDecision` | No |
+| `confirmation` | Ask for approval, rejection, or escalation | Yes | `ConfirmationDecision` | No |
 
-        # Apply policy
-        if event_type == "pre_action" and is_dangerous(payload):
-            result = {"decision": "block", "reason": "Dangerous action"}
-        else:
-            result = {"decision": "allow"}
+`handshake` and `query` are represented in `EventType` for taxonomy purposes,
+but normal clients should use the dedicated `ahp/handshake` and `ahp/query`
+methods.
 
-        if req_id:  # Request (blocking)
-            print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}))
-            sys.stdout.flush()
+## Decision Shapes
+
+### Generic `Decision`
+
+Generic decisions are used by ordinary action and prompt gates.
+
+| Decision | Meaning |
+| --- | --- |
+| `allow` | Continue, optionally with metadata or modified payload. |
+| `block` | Stop and return a reason. |
+| `modify` | Continue with harness-modified parameters. |
+| `defer` | Retry later. |
+| `escalate` | Forward to a human or external approval path. |
+
+### Specialized Decisions
+
+Some harness points need richer return types than a generic allow/block:
+
+- `IdleDecision` can allow or defer idle/background work.
+- `IntentDetectionDecision` returns detected intent, confidence, and target
+  hints.
+- `ContextPerceptionDecision` injects facts, file snippets, project summaries,
+  knowledge, or suggestions.
+- `MemoryRecallDecision` injects recalled facts.
+- `PlanningDecision` selects a planning strategy or modifies the task.
+- `ReasoningDecision` returns reasoning hints or blocks reasoning.
+- `RateLimitDecision` retries, queues, or skips.
+- `ConfirmationDecision` approves, rejects, or escalates.
+
+Specialized events must be sent individually with `send_typed_event` or
+equivalent JSON-RPC calls. They are intentionally excluded from batch requests
+because a batch response contains `Vec<Decision>`.
+
+## Client Lifecycle
+
+1. Create an `AhpClient` with a transport.
+2. Run `handshake` with agent capabilities.
+3. Send blocking events with `send_event_decision` or `send_typed_event`.
+4. Send fire-and-forget events through `send_event` for non-blocking event
+   types.
+5. Use `send_batch` only for generic-decision event types.
+6. Close the client when done.
+
+The Rust client validates:
+
+- JSON-RPC version is `2.0`.
+- Response id matches the request id.
+- Error responses become `AhpError::Protocol`.
+- Missing results are rejected.
+- Events and batches require a completed handshake.
+- Batch response decision count must match request event count.
+
+## Rust Client Example
+
+```rust
+use a3s_ahp::{AhpClient, Decision, EventType, Transport};
+
+async fn run_agent() -> a3s_ahp::Result<()> {
+    let client = AhpClient::new(Transport::Stdio {
+        program: "python3".into(),
+        args: vec!["harness.py".into()],
+    })
+    .await?;
+
+    client
+        .handshake(vec![
+            "pre_action".to_string(),
+            "post_action".to_string(),
+        ])
+        .await?;
+
+    let decision = client
+        .send_event_decision(
+            EventType::PreAction,
+            serde_json::json!({
+                "tool_name": "bash",
+                "arguments": {
+                    "command": "cargo test --all-features"
+                }
+            }),
+        )
+        .await?;
+
+    match decision {
+        Decision::Allow { .. } => {
+            // Execute the action.
+        }
+        Decision::Block { reason, .. } => {
+            // Surface the policy reason to the caller.
+            eprintln!("blocked: {reason}");
+        }
+        Decision::Modify {
+            modified_payload, ..
+        } => {
+            // Execute using modified_payload.
+            println!("modified: {modified_payload}");
+        }
+        Decision::Defer { retry_after_ms, .. } => {
+            // Retry later.
+            println!("retry after {retry_after_ms}ms");
+        }
+        Decision::Escalate { reason, .. } => {
+            // Hand off to a human approval path.
+            eprintln!("escalated: {reason}");
+        }
+    }
+
+    client.close().await?;
+    Ok(())
+}
 ```
 
-## Project Structure
+## Typed Event Example
 
+```rust
+use a3s_ahp::{AhpClient, ContextPerceptionDecision, EventType};
+
+async fn inject_context(client: &AhpClient) -> a3s_ahp::Result<()> {
+    let decision: ContextPerceptionDecision = client
+        .send_typed_event(
+            EventType::ContextPerception,
+            serde_json::json!({
+                "session_id": "session-1",
+                "intent": "understand",
+                "target": {
+                    "location": {
+                        "path": ".",
+                        "location_type": "workspace"
+                    }
+                },
+                "context": {
+                    "workspace": "/repo",
+                    "query": "How is the protocol structured?"
+                }
+            }),
+        )
+        .await?;
+
+    match decision {
+        ContextPerceptionDecision::Allow {
+            injected_context, ..
+        } => {
+            println!("facts: {}", injected_context.facts.len());
+        }
+        ContextPerceptionDecision::Block { reason, .. } => {
+            eprintln!("context blocked: {reason}");
+        }
+        ContextPerceptionDecision::Refine { scope_hints, .. } => {
+            println!("refine with hints: {scope_hints:?}");
+        }
+    }
+
+    Ok(())
+}
 ```
+
+## Server Example
+
+```rust
+use a3s_ahp::{
+    AhpEvent, AhpServer, Decision, EventHandler, HarnessConfig, Result,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
+
+struct PolicyHarness;
+
+#[async_trait]
+impl EventHandler for PolicyHarness {
+    async fn handle_event(&self, event: &AhpEvent) -> Result<Decision> {
+        if event.payload["tool_name"] == "rm" {
+            return Ok(Decision::Block {
+                reason: "destructive command requires approval".to_string(),
+                metadata: None,
+            });
+        }
+
+        Ok(Decision::Allow {
+            modified_payload: None,
+            metadata: None,
+        })
+    }
+}
+
+async fn run_harness() -> Result<()> {
+    let server = AhpServer::new(Arc::new(PolicyHarness))
+        .with_capabilities(["pre_action", "post_action", "batch"])
+        .with_config(HarnessConfig {
+            timeout_ms: Some(10_000),
+            batch_size: Some(100),
+            max_depth: Some(10),
+        });
+
+    server.run_stdio().await
+}
+```
+
+`AhpServer` validates event depth, rejects blocking events sent as
+notifications, rejects fire-and-forget events sent as requests, and rejects
+batch entries that require specialized decision payloads.
+
+## Transports
+
+| Transport | Feature | Status | Notes |
+| --- | --- | --- | --- |
+| stdio | `stdio` | Implemented | Default feature; useful for local subprocess harnesses. |
+| HTTP | `http` | Implemented | Supports API key and bearer auth. |
+| WebSocket | `websocket` | Implemented | Supports API key and bearer auth via URL query parameters. |
+| Unix socket | `unix-socket` | Implemented | Local IPC on Unix platforms. |
+| gRPC | `grpc` | Reserved | Feature placeholder; not included in `all-transports`. |
+
+Feature examples:
+
+```bash
+cargo add a3s-ahp
+cargo add a3s-ahp --features http
+cargo add a3s-ahp --features all-transports
+```
+
+## Transport Configuration
+
+```rust
+use a3s_ahp::{AhpClient, Transport, TransportConfig};
+
+async fn connect() -> a3s_ahp::Result<AhpClient> {
+    AhpClient::new_with_config(
+        Transport::Http {
+            url: "https://harness.example.com/ahp".to_string(),
+            auth: None,
+        },
+        TransportConfig {
+            timeout_ms: Some(5_000),
+        },
+    )
+    .await
+}
+```
+
+The same timeout configuration is applied consistently across implemented
+transports where request/response waiting is involved.
+
+## Authentication
+
+```rust
+use a3s_ahp::{AuthConfig, Transport};
+
+let http = Transport::Http {
+    url: "https://harness.example.com/ahp".to_string(),
+    auth: Some(AuthConfig::bearer("token")),
+};
+
+let websocket = Transport::WebSocket {
+    url: "wss://harness.example.com/ahp".to_string(),
+    auth: Some(AuthConfig::api_key("key")),
+};
+```
+
+## Batching Rules
+
+Batching exists to amortize transport overhead for homogeneous generic policy
+checks. It is not a multiplexing mechanism for every event type.
+
+Rules:
+
+- `ahp/batch` returns `BatchResponse { decisions: Vec<Decision> }`.
+- Event order is preserved.
+- The number of returned decisions must equal the number of submitted events.
+- Server-side handler failures become `Decision::Block`.
+- Specialized decision events are rejected.
+- `handshake` and `query` are rejected in batches.
+- Batch size can be limited by `HarnessConfig.batch_size`.
+
+## Depth And Recursion
+
+Agents can emit AHP events while handling another AHP decision. The `depth`
+field makes that recursion visible. Harnesses can advertise and enforce
+`HarnessConfig.max_depth` to prevent uncontrolled loops.
+
+## Repository Layout
+
+```text
 ahp/
 ├── src/
-│   ├── lib.rs          # Main library (AhpClient, AhpServer, types)
-│   ├── protocol.rs     # Protocol types (EventType, Decision, etc.)
-│   ├── client.rs       # Client implementation
-│   ├── server.rs       # Server implementation
-│   ├── error.rs        # Error types
-│   ├── auth.rs         # Authentication
-│   └── transport/      # Transport implementations
-│       ├── mod.rs
-│       ├── stdio.rs
+│   ├── lib.rs
+│   ├── auth.rs
+│   ├── client.rs
+│   ├── error.rs
+│   ├── protocol.rs
+│   ├── protocol/
+│   │   ├── core.rs
+│   │   ├── context.rs
+│   │   ├── events.rs
+│   │   └── json_rpc.rs
+│   ├── server.rs
+│   ├── server/
+│   │   └── tests.rs
+│   └── transport/
 │       ├── http.rs
-│       ├── websocket.rs
+│       ├── stdio.rs
 │       ├── unix_socket.rs
-│       └── grpc.rs
+│       └── websocket.rs
 ├── examples/
-│   ├── simple_client.rs
-│   ├── simple_server.py
-│   ├── http_client.rs
-│   ├── http_server.rs
-│   └── websocket_*.rs
 └── Cargo.toml
 ```
 
-## Features
+## Development
 
-- **Framework-agnostic** — Any agent can implement AHP
-- **Language-neutral** — Harnesses can be written in any language
-- **Transport-flexible** — Works over stdio, HTTP, WebSocket, and Unix sockets; gRPC is reserved as a feature placeholder
-- **Bidirectional** — Agents can query harness, not just receive commands
-- **Extensible** — New event types via capability negotiation
-- **Structured context** — Rich context injection for informed decisions
+Run checks from this crate directory:
 
-## Version
-
-- **Protocol:** 2.3
-- **This crate:** 2.3.1
+```bash
+cargo fmt --all -- --check
+cargo check --all-features
+cargo check --no-default-features
+cargo check --features all-transports
+cargo test --all-features
+```
 
 ## License
 
