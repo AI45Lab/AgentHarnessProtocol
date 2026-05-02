@@ -215,31 +215,42 @@ impl AhpClient {
         Ok(serde_json::from_value(value)?)
     }
 
-    /// Send a complete event (with context) and wait for decision.
+    /// Send a complete event and return the raw decision payload.
     ///
-    /// Unlike `send_event` which creates a new AhpEvent, this method accepts
-    /// the full event with pre-built context and metadata.
-    pub async fn send_event_full(&self, event: &AhpEvent) -> Result<Decision> {
+    /// Unlike `send_event`, this method preserves the caller-provided
+    /// `session_id`, `agent_id`, `depth`, `context`, and `metadata`.
+    pub async fn send_event_full_value(&self, event: &AhpEvent) -> Result<serde_json::Value> {
         self.ensure_handshake()?;
 
         if event.event_type.is_blocking() {
-            let result = self
-                .send_rpc_request("ahp/event", serde_json::to_value(event)?, "Event")
-                .await?;
-            let decision: Decision = serde_json::from_value(result)?;
-
-            Ok(decision)
+            self.send_rpc_request("ahp/event", serde_json::to_value(event)?, "Event")
+                .await
         } else {
             // Fire-and-forget notification
             let notification = AhpNotification::new("ahp/event", serde_json::to_value(event)?);
             self.transport.send_notification(notification).await?;
 
             // Return default allow decision for notifications
-            Ok(Decision::Allow {
-                modified_payload: None,
-                metadata: None,
-            })
+            Ok(serde_json::json!({"decision": "allow"}))
         }
+    }
+
+    /// Send a complete event (with context) and deserialize a generic decision.
+    ///
+    /// Use `send_typed_event_full` for harness points that return specialized
+    /// decision shapes such as `ContextPerceptionDecision`.
+    pub async fn send_event_full(&self, event: &AhpEvent) -> Result<Decision> {
+        let value = self.send_event_full_value(event).await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Send a complete event and deserialize the response into a selected type.
+    pub async fn send_typed_event_full<T>(&self, event: &AhpEvent) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let value = self.send_event_full_value(event).await?;
+        Ok(serde_json::from_value(value)?)
     }
 
     /// Send a query to the harness
@@ -354,9 +365,11 @@ impl AhpClient {
 mod tests {
     use super::*;
     use crate::protocol::{
-        AhpResponse, BatchResponse, ContextPerceptionDecision, Fact, InjectedContext,
+        AhpResponse, BatchResponse, ContextPerceptionDecision, EventContext, Fact, InjectedContext,
+        SessionStats,
     };
     use async_trait::async_trait;
+    use std::sync::Mutex;
 
     struct StaticTransport {
         response: AhpResponse,
@@ -374,6 +387,30 @@ mod tests {
         }
 
         async fn send_notification(&self, _notification: AhpNotification) -> Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct RecordingTransport {
+        response: AhpResponse,
+        last_request_params: Mutex<Option<serde_json::Value>>,
+    }
+
+    #[async_trait]
+    impl TransportLayer for RecordingTransport {
+        async fn send_request(&self, request: AhpRequest) -> Result<AhpResponse> {
+            *self.last_request_params.lock().unwrap() = Some(request.params.clone());
+            let mut response = self.response.clone();
+            response.id = request.id;
+            Ok(response)
+        }
+
+        async fn send_notification(&self, notification: AhpNotification) -> Result<()> {
+            *self.last_request_params.lock().unwrap() = Some(notification.params.clone());
             Ok(())
         }
 
@@ -417,6 +454,51 @@ mod tests {
             }
             other => panic!("expected allow decision, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn send_event_full_value_preserves_event_context() {
+        let transport = Arc::new(RecordingTransport {
+            response: AhpResponse::success("placeholder", serde_json::json!({"decision": "allow"})),
+            last_request_params: Mutex::new(None),
+        });
+        let client = AhpClient::new_for_testing(transport.clone());
+        let event = AhpEvent {
+            event_type: EventType::PreAction,
+            session_id: "session-1".to_string(),
+            agent_id: "agent-1".to_string(),
+            timestamp: "2026-05-01T00:00:00Z".to_string(),
+            depth: 2,
+            payload: serde_json::json!({"tool": "bash"}),
+            context: Some(EventContext {
+                session_stats: Some(SessionStats {
+                    total_actions: 3,
+                    total_tokens: 42,
+                    duration_ms: 1000,
+                    error_count: 0,
+                }),
+                current_task: Some("refactor".to_string()),
+                ..EventContext::default()
+            }),
+            metadata: None,
+        };
+
+        client
+            .send_event_full_value(&event)
+            .await
+            .expect("full event should send");
+
+        let params = transport
+            .last_request_params
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request params should be recorded");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["agent_id"], "agent-1");
+        assert_eq!(params["depth"], 2);
+        assert_eq!(params["context"]["current_task"], "refactor");
+        assert_eq!(params["context"]["session_stats"]["total_tokens"], 42);
     }
 
     #[tokio::test]

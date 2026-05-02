@@ -1,4 +1,4 @@
-# Agent Harness Protocol (AHP) v2.3
+# Agent Harness Protocol (AHP) v2.4
 
 **A transport-agnostic supervision protocol for autonomous AI agents.**
 
@@ -40,6 +40,9 @@ AHP defines a small shared contract between an agent and a harness:
 - **Typed decisions where shape matters** — context, memory, planning,
   reasoning, rate limit, confirmation, idle, and intent detection use specialized
   decision payloads.
+- **Durable runtime contracts** — run lifecycle, task lists, verification, and
+  evidence references use stable event shapes for replay, UI rendering, and
+  audit.
 - **Generic decisions where policy is enough** — action and prompt gates use the
   generic `Decision` shape.
 - **Capability negotiation first** — clients handshake before sending events.
@@ -57,14 +60,18 @@ AHP defines a small shared contract between an agent and a harness:
 - Response validation for JSON-RPC version, request id, errors, and missing
   results.
 - Typed harness handlers for specialized event families.
+- Durable run lifecycle, task-list, and verification contract events.
 - Batch requests for generic-decision events.
 - Server builder methods for advertised harness info and validation limits.
+- Full-event client APIs that preserve caller-provided session, agent, depth,
+  context, and metadata.
+- HTTP and WebSocket Rust examples gated behind their transport features.
 - gRPC feature placeholder reserved for future implementation.
 
 ## Protocol Version
 
-- Protocol version: `2.3`
-- Crate version: `2.3.1`
+- Protocol version: `2.4`
+- Crate version: `2.4.0`
 - Rust crate: `a3s-ahp`
 - Repository: `https://github.com/A3S-Lab/AgentHarnessProtocol`
 
@@ -159,10 +166,118 @@ AHP uses JSON-RPC 2.0.
 | `reasoning` | Provide reasoning hints or block reasoning | Yes | `ReasoningDecision` | No |
 | `rate_limit` | Decide backpressure after a limit is hit | Yes | `RateLimitDecision` | No |
 | `confirmation` | Ask for approval, rejection, or escalation | Yes | `ConfirmationDecision` | No |
+| `run_lifecycle` | Durable run state transition | No | Notification | Yes |
+| `task_list` | Authoritative task-list snapshot | No | Notification | Yes |
+| `verification` | Verification status and evidence snapshot | No | Notification | Yes |
 
 `handshake` and `query` are represented in `EventType` for taxonomy purposes,
 but normal clients should use the dedicated `ahp/handshake` and `ahp/query`
 methods.
+
+## Durable Runtime Contracts
+
+AHP v2.4 adds non-blocking runtime contract events. These events are designed
+for supervisors, dashboards, replay systems, and audit logs. They do not replace
+policy hooks such as `pre_action`; instead, they provide stable state snapshots
+that can be reduced from richer runtime-specific event streams.
+
+### Run Lifecycle
+
+`run_lifecycle` records durable state transitions for a single agent run.
+
+```json
+{
+  "event_type": "run_lifecycle",
+  "session_id": "sess-abc",
+  "agent_id": "agent-xyz",
+  "timestamp": "2026-05-01T00:00:00Z",
+  "depth": 0,
+  "payload": {
+    "run_id": "run-123",
+    "session_id": "sess-abc",
+    "status": "executing",
+    "prompt": "fix the failing tests",
+    "started_at": "2026-05-01T00:00:00Z",
+    "updated_at": "2026-05-01T00:00:01Z"
+  }
+}
+```
+
+Supported `RunStatus` values are `created`, `planning`, `executing`,
+`verifying`, `completed`, `failed`, and `cancelled`.
+
+### Task List
+
+`task_list` sends an authoritative snapshot of the current task graph. It is
+useful for UIs that need Codex-like task tracking without knowing the emitting
+runtime's private event model.
+
+```json
+{
+  "event_type": "task_list",
+  "session_id": "sess-abc",
+  "agent_id": "agent-xyz",
+  "timestamp": "2026-05-01T00:00:02Z",
+  "depth": 0,
+  "payload": {
+    "run_id": "run-123",
+    "session_id": "sess-abc",
+    "updated_at": "2026-05-01T00:00:02Z",
+    "tasks": [
+      {
+        "id": "step-1",
+        "title": "Inspect failing test",
+        "status": "completed",
+        "evidence": [
+          {
+            "kind": "log",
+            "summary": "cargo test reproduced the failure"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Supported `TaskStatus` values are `pending`, `in_progress`, `completed`,
+`failed`, `skipped`, and `cancelled`.
+
+### Verification
+
+`verification` reports validation status, checks, artifacts, and residual risks
+for a run.
+
+```json
+{
+  "event_type": "verification",
+  "session_id": "sess-abc",
+  "agent_id": "agent-xyz",
+  "timestamp": "2026-05-01T00:00:03Z",
+  "depth": 0,
+  "payload": {
+    "run_id": "run-123",
+    "session_id": "sess-abc",
+    "status": "passed",
+    "updated_at": "2026-05-01T00:00:03Z",
+    "checks": [
+      {
+        "id": "cargo-test",
+        "subject": "Rust workspace tests",
+        "status": "passed",
+        "command": "cargo test --all-features"
+      }
+    ],
+    "residual_risks": []
+  }
+}
+```
+
+Supported `VerificationStatus` values are `pending`, `running`, `passed`,
+`failed`, `skipped`, and `needs_review`.
+
+The server validates these payloads even when they arrive as notifications. Bad
+runtime contract payloads are rejected instead of being silently accepted.
 
 ## Decision Shapes
 
@@ -202,10 +317,13 @@ because a batch response contains `Vec<Decision>`.
 1. Create an `AhpClient` with a transport.
 2. Run `handshake` with agent capabilities.
 3. Send blocking events with `send_event_decision` or `send_typed_event`.
-4. Send fire-and-forget events through `send_event` for non-blocking event
+4. Send prebuilt events with `send_event_full`, `send_event_full_value`, or
+   `send_typed_event_full` when the caller needs to preserve context and
+   metadata.
+5. Send fire-and-forget events through `send_event` for non-blocking event
    types.
-5. Use `send_batch` only for generic-decision event types.
-6. Close the client when done.
+6. Use `send_batch` only for generic-decision event types.
+7. Close the client when done.
 
 The Rust client validates:
 
@@ -215,6 +333,8 @@ The Rust client validates:
 - Missing results are rejected.
 - Events and batches require a completed handshake.
 - Batch response decision count must match request event count.
+- Full-event APIs preserve caller-supplied session, agent, depth, context, and
+  metadata.
 
 ## Rust Client Example
 
@@ -320,6 +440,41 @@ async fn inject_context(client: &AhpClient) -> a3s_ahp::Result<()> {
 }
 ```
 
+## Full Event Example
+
+Use `send_event_full` or `send_event_full_value` when the runtime has already
+assembled an `AhpEvent` and must preserve its context.
+
+```rust
+use a3s_ahp::{AhpClient, AhpEvent, EventContext, EventType, SessionStats};
+
+async fn send_runtime_context(client: &AhpClient) -> a3s_ahp::Result<()> {
+    let event = AhpEvent {
+        event_type: EventType::PreAction,
+        session_id: "session-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        timestamp: "2026-05-01T00:00:00Z".to_string(),
+        depth: 1,
+        payload: serde_json::json!({"tool_name": "bash"}),
+        context: Some(EventContext {
+            current_task: Some("run tests".to_string()),
+            session_stats: Some(SessionStats {
+                total_actions: 3,
+                total_tokens: 42,
+                duration_ms: 1000,
+                error_count: 0,
+            }),
+            ..EventContext::default()
+        }),
+        metadata: None,
+    };
+
+    let decision = client.send_event_full(&event).await?;
+    println!("decision: {decision:?}");
+    Ok(())
+}
+```
+
 ## Server Example
 
 ```rust
@@ -364,6 +519,8 @@ async fn run_harness() -> Result<()> {
 `AhpServer` validates event depth, rejects blocking events sent as
 notifications, rejects fire-and-forget events sent as requests, and rejects
 batch entries that require specialized decision payloads.
+It also validates the typed payloads for `run_lifecycle`, `task_list`, and
+`verification` notifications.
 
 ## Transports
 

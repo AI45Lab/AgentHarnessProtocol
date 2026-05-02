@@ -1,15 +1,31 @@
 [package]
 name = "a3s-ahp"
-version = "2.3.1"
+version = "2.4.0"
 edition = "2021"
 authors = ["A3S Lab Team"]
 license = "MIT"
 repository = "https://github.com/A3S-Lab/AgentHarnessProtocol"
-description = "Agent Harness Protocol v2.3 — Universal, transport-agnostic protocol for supervising autonomous AI agents"
+description = "Agent Harness Protocol v2.4 — Universal, transport-agnostic protocol for supervising autonomous AI agents"
 
 [lib]
 name = "a3s_ahp"
 path = "src/lib.rs"
+
+[[example]]
+name = "http_client"
+required-features = ["http"]
+
+[[example]]
+name = "http_server"
+required-features = ["http"]
+
+[[example]]
+name = "websocket_client"
+required-features = ["websocket"]
+
+[[example]]
+name = "websocket_server"
+required-features = ["websocket"]
 
 [features]
 default = ["stdio"]

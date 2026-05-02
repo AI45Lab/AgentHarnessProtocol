@@ -2,6 +2,161 @@ use super::Fact;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Stable lifecycle status for an agent run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Created,
+    Planning,
+    Executing,
+    Verifying,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// Run lifecycle event.
+///
+/// This is the durable, cross-runtime state transition contract. Runtimes may
+/// expose richer SDK-specific events, but they should be reducible to these
+/// states for harness supervision, replay, and audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunLifecycleEvent {
+    pub run_id: String,
+    pub session_id: String,
+    pub status: RunStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Reference to a durable artifact owned by the runtime or harness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+/// Reference to evidence supporting a task or verification check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceRef {
+    pub kind: String,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ArtifactRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Stable task status used by harness-facing task list snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    Skipped,
+    Cancelled,
+}
+
+/// A single task in the authoritative harness-facing task list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskItem {
+    pub id: String,
+    pub title: String,
+    pub status: TaskStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EvidenceRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Full task-list snapshot for UI rendering, replay, and audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskListEvent {
+    pub run_id: String,
+    pub session_id: String,
+    pub tasks: Vec<TaskItem>,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Verification status for a run or check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationStatus {
+    Pending,
+    Running,
+    Passed,
+    Failed,
+    Skipped,
+    NeedsReview,
+}
+
+/// A single verification check with compact evidence references.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationCheck {
+    pub id: String,
+    pub subject: String,
+    pub status: VerificationStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EvidenceRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Verification snapshot for a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationEvent {
+    pub run_id: String,
+    pub session_id: String,
+    pub status: VerificationStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<VerificationCheck>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residual_risks: Vec<String>,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
 /// Memory recall event - model needs to retrieve from memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecallEvent {

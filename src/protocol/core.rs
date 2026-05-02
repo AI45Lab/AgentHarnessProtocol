@@ -50,6 +50,12 @@ pub enum EventType {
     Confirmation,
     /// Intent detection - detect user intent from prompt (blocking).
     IntentDetection,
+    /// Durable run lifecycle transition (fire-and-forget).
+    RunLifecycle,
+    /// Authoritative task-list snapshot for a run (fire-and-forget).
+    TaskList,
+    /// Verification status snapshot for a run (fire-and-forget).
+    Verification,
 }
 
 impl EventType {
@@ -116,6 +122,9 @@ impl std::fmt::Display for EventType {
             EventType::RateLimit => write!(f, "rate_limit"),
             EventType::Confirmation => write!(f, "confirmation"),
             EventType::IntentDetection => write!(f, "intent_detection"),
+            EventType::RunLifecycle => write!(f, "run_lifecycle"),
+            EventType::TaskList => write!(f, "task_list"),
+            EventType::Verification => write!(f, "verification"),
         }
     }
 }

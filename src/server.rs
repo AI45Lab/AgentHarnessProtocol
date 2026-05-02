@@ -4,7 +4,8 @@ use crate::protocol::{
     ConfirmationDecision, ConfirmationEvent, ContextPerceptionDecision, ContextPerceptionEvent,
     EventContext, HarnessConfig, HarnessInfo, IdleDecision, IdleEvent, IntentDetectionDecision,
     IntentDetectionEvent, MemoryRecallDecision, MemoryRecallEvent, PlanningDecision, PlanningEvent,
-    RateLimitDecision, RateLimitEvent, ReasoningDecision, ReasoningEvent,
+    RateLimitDecision, RateLimitEvent, ReasoningDecision, ReasoningEvent, RunLifecycleEvent,
+    TaskListEvent, VerificationEvent,
 };
 use crate::{
     AhpError, AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest, BatchResponse,
@@ -193,6 +194,9 @@ impl AhpServer {
                 "pre_prompt".to_string(),
                 "query".to_string(),
                 "batch".to_string(),
+                "run_lifecycle".to_string(),
+                "task_list".to_string(),
+                "verification".to_string(),
             ],
         }
     }
@@ -308,6 +312,19 @@ impl AhpServer {
                     event.depth, max_depth
                 )));
             }
+        }
+
+        match event.event_type {
+            EventType::RunLifecycle => {
+                serde_json::from_value::<RunLifecycleEvent>(event.payload.clone())?;
+            }
+            EventType::TaskList => {
+                serde_json::from_value::<TaskListEvent>(event.payload.clone())?;
+            }
+            EventType::Verification => {
+                serde_json::from_value::<VerificationEvent>(event.payload.clone())?;
+            }
+            _ => {}
         }
 
         Ok(())

@@ -1,4 +1,4 @@
-//! Agent Harness Protocol (AHP) v2.3
+//! Agent Harness Protocol (AHP) v2.4
 //!
 //! Universal, transport-agnostic protocol for supervising autonomous AI agents.
 //!
@@ -61,23 +61,24 @@ pub use auth::{AuthConfig, AuthMethod};
 pub use client::AhpClient;
 pub use error::{AhpError, Result};
 pub use protocol::{
-    AgentInfo, AhpErrorObject, AhpEvent, AhpNotification, AhpRequest, AhpResponse, BatchRequest,
-    BatchResponse, ConfirmationDecision, ConfirmationEvent, ConfirmationType,
-    ContextPerceptionDecision, ContextPerceptionEvent, Decision, EventContext, EventType, Fact,
-    FileContentSnippet, HandshakeRequest, HandshakeResponse, HarnessConfig, HarnessInfo,
-    HeartbeatEvent, HistoryItem, IdleDecision, IdleEvent, InjectedContext, IntentDetectionDecision,
-    IntentDetectionEvent, MemoryRecallDecision, MemoryRecallEvent, MemorySummary,
-    PerceptionConstraints, PerceptionContext, PerceptionDomain, PerceptionFreshness,
+    AgentInfo, AhpErrorObject, AhpEvent, AhpNotification, AhpRequest, AhpResponse, ArtifactRef,
+    BatchRequest, BatchResponse, ConfirmationDecision, ConfirmationEvent, ConfirmationType,
+    ContextPerceptionDecision, ContextPerceptionEvent, Decision, EventContext, EventType,
+    EvidenceRef, Fact, FileContentSnippet, HandshakeRequest, HandshakeResponse, HarnessConfig,
+    HarnessInfo, HeartbeatEvent, HistoryItem, IdleDecision, IdleEvent, InjectedContext,
+    IntentDetectionDecision, IntentDetectionEvent, MemoryRecallDecision, MemoryRecallEvent,
+    MemorySummary, PerceptionConstraints, PerceptionContext, PerceptionDomain, PerceptionFreshness,
     PerceptionIntent, PerceptionModality, PerceptionTarget, PerceptionUrgency, PlanningDecision,
     PlanningEvent, PlanningStrategy, ProjectSummary, QueryRequest, QueryResponse,
     RateLimitDecision, RateLimitEvent, RateLimitType, ReasoningDecision, ReasoningEvent,
-    ReasoningType, SessionStats, SuccessEvent, TargetHints, TimeRange,
+    ReasoningType, RunLifecycleEvent, RunStatus, SessionStats, SuccessEvent, TargetHints, TaskItem,
+    TaskListEvent, TaskStatus, TimeRange, VerificationCheck, VerificationEvent, VerificationStatus,
 };
 pub use server::AhpServer;
 pub use transport::{Transport, TransportConfig};
 
 /// Protocol version
-pub const PROTOCOL_VERSION: &str = "2.3";
+pub const PROTOCOL_VERSION: &str = "2.4";
 
 /// Default timeout for blocking requests (milliseconds)
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;

@@ -99,6 +99,31 @@ fn context_perception_event() -> AhpEvent {
     }
 }
 
+fn run_lifecycle_event() -> AhpEvent {
+    let payload = crate::RunLifecycleEvent {
+        run_id: "run-1".to_string(),
+        session_id: "session-1".to_string(),
+        status: crate::RunStatus::Executing,
+        prompt: Some("fix the failing tests".to_string()),
+        result_summary: None,
+        error: None,
+        started_at: Some("2026-05-01T00:00:00Z".to_string()),
+        updated_at: "2026-05-01T00:00:01Z".to_string(),
+        metadata: None,
+    };
+
+    AhpEvent {
+        event_type: EventType::RunLifecycle,
+        session_id: "session-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        timestamp: "2026-05-01T00:00:01Z".to_string(),
+        depth: 0,
+        payload: serde_json::to_value(payload).expect("run lifecycle event serializes"),
+        context: None,
+        metadata: None,
+    }
+}
+
 #[test]
 fn server_builder_overrides_harness_info_and_config() {
     let harness_info = HarnessInfo {
@@ -124,6 +149,55 @@ fn server_builder_overrides_harness_info_and_config() {
     assert_eq!(server.config().timeout_ms, Some(2500));
     assert_eq!(server.config().batch_size, Some(2));
     assert_eq!(server.config().max_depth, Some(1));
+}
+
+#[test]
+fn run_contract_events_are_fire_and_forget_and_batchable() {
+    for event_type in [
+        EventType::RunLifecycle,
+        EventType::TaskList,
+        EventType::Verification,
+    ] {
+        assert!(!event_type.is_blocking());
+        assert!(!event_type.uses_specialized_decision());
+        assert!(event_type.is_batchable());
+    }
+
+    assert_eq!(EventType::RunLifecycle.to_string(), "run_lifecycle");
+    assert_eq!(EventType::TaskList.to_string(), "task_list");
+    assert_eq!(EventType::Verification.to_string(), "verification");
+}
+
+#[tokio::test]
+async fn notification_accepts_typed_run_lifecycle_event() {
+    let server = AhpServer::new(Arc::new(FailingHandler));
+    server
+        .handle_notification(AhpNotification::new(
+            "ahp/event",
+            serde_json::to_value(run_lifecycle_event()).unwrap(),
+        ))
+        .await
+        .expect("run lifecycle notification should be accepted");
+}
+
+#[tokio::test]
+async fn notification_rejects_invalid_run_contract_payload() {
+    let server = AhpServer::new(Arc::new(FailingHandler));
+    let mut event = run_lifecycle_event();
+    event.payload = serde_json::json!({
+        "session_id": "session-1",
+        "status": "executing"
+    });
+
+    let error = server
+        .handle_notification(AhpNotification::new(
+            "ahp/event",
+            serde_json::to_value(event).unwrap(),
+        ))
+        .await
+        .expect_err("invalid run lifecycle payload should be rejected");
+
+    assert!(error.to_string().contains("missing field"));
 }
 
 #[tokio::test]
